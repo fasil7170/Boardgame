@@ -133,16 +133,25 @@ pipeline {
         }
         
         // =========================
-        // 12. Deploy to Kubernetes
+        // 12. Deploy to Kubernetes with Rollback
         // =========================
         stage('Deploy To Kubernetes') {
             steps {
-                withKubeConfig(
-                    credentialsId: 'k8-cred', 
-                    namespace: 'webapps', 
-                    serverUrl: 'https://192.168.0.100:6443'
-                ) {
-                    sh "kubectl apply -f deployment-service.yaml"
+                script {
+                    withKubeConfig(
+                        credentialsId: 'k8-cred', 
+                        namespace: 'webapps', 
+                        serverUrl: 'https://192.168.0.100:6443'
+                    ) {
+                        try {
+                            sh "kubectl apply -f deployment-service.yaml"
+                            sh "kubectl rollout status deployment/boardgame-deployment -n webapps"
+                        } catch (Exception e) {
+                            echo "Deployment failed! Rolling back to previous version..."
+                            sh "kubectl rollout undo deployment/boardgame-deployment -n webapps"
+                            error "Deployment failed and rollback executed: ${e.message}"
+                        }
+                    }
                 }
             }
         }
@@ -183,21 +192,30 @@ pipeline {
                     <div style="background-color: ${bannerColor}; padding: 10px;">
                     <h3 style="color: white;">Pipeline Status: ${pipelineStatus.toUpperCase()}</h3>
                     </div>
-                    <p>Check the <a href="${BUILD_URL}">console output</a>.</p>
+                    <p>Check the <a href="${env.BUILD_URL}">console output</a>.</p>
                     </div>
                     </body>
                     </html>
                 """
 
-                emailext (
-                    subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus.toUpperCase()}",
-                    body: body,
-                    to: 'rkf@gmail.com',
-                    from: 'jenkins@example.com',
-                    replyTo: 'jenkins@example.com',
-                    mimeType: 'text/html',
-                    attachmentsPattern: 'trivy-image-report.html'
-                )
+                // Fallback to built-in 'mail' step if 'emailext' is not available
+                try {
+                    emailext (
+                        subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus.toUpperCase()}",
+                        body: body,
+                        to: 'rkf@gmail.com',
+                        from: 'jenkins@example.com',
+                        replyTo: 'jenkins@example.com',
+                        mimeType: 'text/html',
+                        attachmentsPattern: 'trivy-image-report.html'
+                    )
+                } catch (Exception e) {
+                    mail(
+                        to: 'rkf@gmail.com',
+                        subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus.toUpperCase()}",
+                        body: "Pipeline status: ${pipelineStatus}\nCheck console output: ${env.BUILD_URL}"
+                    )
+                }
             }
         }
     }
