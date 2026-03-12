@@ -2,8 +2,8 @@ pipeline {
     agent any
     
     tools {
-        jdk 'jdk17'
-        maven 'maven3'
+        jdk 'jdk17'        // Ensure JDK 17 is installed in Jenkins
+        maven 'maven3'     // Ensure Maven 3 is installed in Jenkins
     }
 
     environment {
@@ -21,16 +21,16 @@ pipeline {
         }
         
         // =========================
-        // 2. Compile
+        // 2. Compile with Java 17
         // =========================
         stage('Compile') {
             steps {
-                sh "mvn compile"
+                sh "mvn clean compile -Dmaven.compiler.source=17 -Dmaven.compiler.target=17"
             }
         }
         
         // =========================
-        // 3. Unit Tests
+        // 3. Run Unit Tests
         // =========================
         stage('Test') {
             steps {
@@ -147,7 +147,7 @@ pipeline {
                             sh "kubectl apply -f deployment-service.yaml"
                             sh "kubectl rollout status deployment/boardgame-deployment -n webapps"
                         } catch (Exception e) {
-                            echo "Deployment failed! Rolling back to previous version..."
+                            echo "Deployment failed! Rolling back..."
                             sh "kubectl rollout undo deployment/boardgame-deployment -n webapps"
                             error "Deployment failed and rollback executed: ${e.message}"
                         }
@@ -174,7 +174,7 @@ pipeline {
     }
 
     // =========================
-    // Post Actions: Email Notification
+    // Post Actions: Email Notification (fallback to mail)
     // =========================
     post {
         always {
@@ -182,40 +182,15 @@ pipeline {
                 def jobName = env.JOB_NAME
                 def buildNumber = env.BUILD_NUMBER
                 def pipelineStatus = currentBuild.result ?: 'UNKNOWN'
-                def bannerColor = pipelineStatus.toUpperCase() == 'SUCCESS' ? 'green' : 'red'
-
-                def body = """
-                    <html>
-                    <body>
-                    <div style="border: 4px solid ${bannerColor}; padding: 10px;">
-                    <h2>${jobName} - Build ${buildNumber}</h2>
-                    <div style="background-color: ${bannerColor}; padding: 10px;">
-                    <h3 style="color: white;">Pipeline Status: ${pipelineStatus.toUpperCase()}</h3>
-                    </div>
-                    <p>Check the <a href="${env.BUILD_URL}">console output</a>.</p>
-                    </div>
-                    </body>
-                    </html>
-                """
-
-                // Fallback to built-in 'mail' step if 'emailext' is not available
-                try {
-                    emailext (
-                        subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus.toUpperCase()}",
-                        body: body,
-                        to: 'rkf@gmail.com',
-                        from: 'jenkins@example.com',
-                        replyTo: 'jenkins@example.com',
-                        mimeType: 'text/html',
-                        attachmentsPattern: 'trivy-image-report.html'
-                    )
-                } catch (Exception e) {
-                    mail(
-                        to: 'rkf@gmail.com',
-                        subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus.toUpperCase()}",
-                        body: "Pipeline status: ${pipelineStatus}\nCheck console output: ${env.BUILD_URL}"
-                    )
-                }
+                
+                mail(
+                    to: 'rkf@gmail.com',
+                    subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus.toUpperCase()}",
+                    body: """
+Pipeline Status: ${pipelineStatus}
+Build URL: ${env.BUILD_URL}
+"""
+                )
             }
         }
     }
