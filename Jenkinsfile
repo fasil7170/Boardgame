@@ -1,13 +1,13 @@
 pipeline {
 
     agent {
-        label 'stable-node' // Use a stable agent to avoid disconnects
+        label 'stable-node'
     }
 
     options {
         timeout(time: 60, unit: 'MINUTES')
         disableConcurrentBuilds()
-        timestamps()
+        // timestamps() <-- removed
     }
 
     tools {
@@ -32,7 +32,7 @@ pipeline {
 
         stage('Build & Test') {
             steps {
-                sh 'mvn clean verify' // compile + test + package
+                sh 'mvn clean verify'
             }
         }
 
@@ -106,7 +106,7 @@ pipeline {
 
         stage('Deploy to Kubernetes') {
             steps {
-                retry(3) { // retry in case of temporary API failure
+                retry(3) {
                     withKubeConfig(
                         credentialsId: 'k8-cred',
                         namespace: 'webapps',
