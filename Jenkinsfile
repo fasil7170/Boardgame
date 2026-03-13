@@ -38,7 +38,7 @@ spec:
     }
 
     environment {
-        SCANNER_HOME = '/opt/sonar-scanner'  // inside container, path may vary
+        SCANNER_HOME = '/opt/sonar-scanner'
     }
 
     stages {
@@ -49,26 +49,22 @@ spec:
             }
         }
 
-        stage('Compile') {
-            steps {
-                container('maven') {
-                    sh "mvn compile"
+        stage('Build & Test Parallel') {
+            parallel {
+                stage('Compile & Test') {
+                    steps {
+                        container('maven') {
+                            sh "mvn clean compile test"
+                        }
+                    }
                 }
-            }
-        }
 
-        stage('Test') {
-            steps {
-                container('maven') {
-                    sh "mvn test"
-                }
-            }
-        }
-
-        stage('File System Scan') {
-            steps {
-                container('trivy') {
-                    sh "trivy fs --format table -o trivy-fs-report.html ."
+                stage('File System Scan') {
+                    steps {
+                        container('trivy') {
+                            sh "trivy fs --format table -o trivy-fs-report.html ."
+                        }
+                    }
                 }
             }
         }
@@ -92,38 +88,29 @@ spec:
             }
         }
 
-        stage('Build') {
-            steps {
-                container('maven') {
-                    sh "mvn package"
-                }
-            }
-        }
-
-        stage('Publish To Nexus') {
-            steps {
-                container('maven') {
-                    withMaven(globalMavenSettingsConfig: 'global-settings') {
-                        sh "mvn deploy"
+        stage('Package & Publish') {
+            parallel {
+                stage('Build & Publish To Nexus') {
+                    steps {
+                        container('maven') {
+                            withMaven(globalMavenSettingsConfig: 'global-settings') {
+                                sh "mvn package deploy"
+                            }
+                        }
                     }
                 }
-            }
-        }
 
-        stage('Build & Tag Docker Image') {
-            steps {
-                container('docker') {
-                    withDockerRegistry(credentialsId: 'docker-cred') {
-                        sh "docker build -t fazil2664/boardshack:latest ."
+                stage('Docker Build & Scan') {
+                    steps {
+                        container('docker') {
+                            withDockerRegistry(credentialsId: 'docker-cred', url: 'https://index.docker.io/v1/') {
+                                sh "docker build -t fazil2664/boardshack:latest ."
+                            }
+                        }
+                        container('trivy') {
+                            sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
+                        }
                     }
-                }
-            }
-        }
-
-        stage('Docker Image Scan') {
-            steps {
-                container('trivy') {
-                    sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
                 }
             }
         }
@@ -131,7 +118,7 @@ spec:
         stage('Push Docker Image') {
             steps {
                 container('docker') {
-                    withDockerRegistry(credentialsId: 'docker-cred') {
+                    withDockerRegistry(credentialsId: 'docker-cred', url: 'https://index.docker.io/v1/') {
                         sh "docker push fazil2664/boardshack:latest"
                     }
                 }
@@ -142,13 +129,6 @@ spec:
             steps {
                 withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
                     sh "kubectl apply -f deployment-service.yaml"
-                }
-            }
-        }
-
-        stage('Verify the Deployment') {
-            steps {
-                withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
                     sh "kubectl get pods -n webapps"
                     sh "kubectl get svc -n webapps"
                 }
