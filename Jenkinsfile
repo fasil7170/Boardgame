@@ -1,5 +1,3 @@
-timestamps { // Wrap the entire pipeline to enable timestamps in logs
-
 pipeline {
 
     agent {
