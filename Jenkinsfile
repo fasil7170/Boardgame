@@ -153,13 +153,13 @@ post {
 
     failure {
         mail(
-            to: 'rkf@gmail.com',
+            to: 'rkftrips@gmail.com',
             subject: "FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
             body: "Build failed.\n${env.BUILD_URL}"
         )
     }
 
 }
-```
+
 
 }
