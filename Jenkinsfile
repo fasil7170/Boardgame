@@ -2,8 +2,8 @@ pipeline {
     agent any
 
     tools {
-        jdk 'jdk17'        // Ensure JDK 17 is installed in Jenkins
-        maven 'maven3'     // Ensure Maven 3 is installed in Jenkins
+        jdk 'jdk17'
+        maven 'maven3'
     }
 
     environment {
@@ -20,40 +20,53 @@ pipeline {
                 git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/fasil7170/Boardgame.git'
             }
         }
-        
+
         // =========================
         // 2. Compile with Java 17
         // =========================
         stage('Compile') {
             steps {
-                sh "mvn clean compile -Dmaven.compiler.source=17 -Dmaven.compiler.target=17"
+                sh "mvn compile -Dmaven.compiler.source=17 -Dmaven.compiler.target=17"
             }
         }
-        
+
         // =========================
-        // 3. Run Unit Tests (Optimized)
+        // 3. Run Unit Tests (Parallel & Optimized)
         // =========================
         stage('Test') {
             steps {
                 sh """
                 mvn test \
                     -B \
+                    -T 2C \
                     -Dspring.main.lazy-initialization=true \
                     -Dspring.main.web-application-type=none \
                     -Dspring.jpa.open-in-view=false
                 """
             }
         }
-        
+
         // =========================
-        // 4. File System Security Scan
+        // 4 & 10. Security Scans in Parallel
         // =========================
-        stage('File System Scan') {
-            steps {
-                sh "trivy fs --format table -o trivy-fs-report.html ."
+        stage('Security Scans') {
+            parallel {
+                stage('File System Scan') {
+                    steps {
+                        sh "trivy fs --format table -o trivy-fs-report.html ."
+                    }
+                }
+                stage('Docker Image Scan') {
+                    steps {
+                        script {
+                            sh "docker build -t fazil2664/boardshack:latest ."
+                            sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
+                        }
+                    }
+                }
             }
         }
-        
+
         // =========================
         // 5. SonarQube Analysis
         // =========================
@@ -67,7 +80,7 @@ pipeline {
                 }
             }
         }
-        
+
         // =========================
         // 6. SonarQube Quality Gate
         // =========================
@@ -81,7 +94,7 @@ pipeline {
                 }
             }
         }
-        
+
         // =========================
         // 7. Build Package
         // =========================
@@ -90,7 +103,7 @@ pipeline {
                 sh "mvn package"
             }
         }
-        
+
         // =========================
         // 8. Deploy to Nexus
         // =========================
@@ -101,30 +114,7 @@ pipeline {
                 }
             }
         }
-        
-        // =========================
-        // 9. Build & Tag Docker Image
-        // =========================
-        stage('Build Docker Image') {
-            steps {
-                script {
-                    withDockerRegistry(credentialsId: 'docker-cred') {
-                        sh "docker build -t fazil2664/boardshack:latest ."
-                        sh "docker tag fazil2664/boardshack:latest fazil2664/boardshack:${env.BUILD_NUMBER}"
-                    }
-                }
-            }
-        }
-        
-        // =========================
-        // 10. Docker Image Security Scan
-        // =========================
-        stage('Docker Image Scan') {
-            steps {
-                sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
-            }
-        }
-        
+
         // =========================
         // 11. Push Docker Image
         // =========================
@@ -138,7 +128,7 @@ pipeline {
                 }
             }
         }
-        
+
         // =========================
         // 12. Deploy to Kubernetes with Rollback
         // =========================
@@ -146,8 +136,8 @@ pipeline {
             steps {
                 script {
                     withKubeConfig(
-                        credentialsId: 'k8-cred', 
-                        namespace: 'webapps', 
+                        credentialsId: 'k8-cred',
+                        namespace: 'webapps',
                         serverUrl: 'https://192.168.0.100:6443'
                     ) {
                         try {
@@ -162,15 +152,15 @@ pipeline {
                 }
             }
         }
-        
+
         // =========================
         // 13. Verify Deployment
         // =========================
         stage('Verify Deployment') {
             steps {
                 withKubeConfig(
-                    credentialsId: 'k8-cred', 
-                    namespace: 'webapps', 
+                    credentialsId: 'k8-cred',
+                    namespace: 'webapps',
                     serverUrl: 'https://192.168.0.100:6443'
                 ) {
                     sh "kubectl get pods -n webapps"
