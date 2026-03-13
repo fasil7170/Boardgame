@@ -154,4 +154,3 @@ pipeline {
     }
 
 } // end of pipeline
-} // end of timestamps wrapper
