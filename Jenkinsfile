@@ -1,3 +1,5 @@
+timestamps { // Wrap the entire pipeline to enable timestamps in logs
+
 pipeline {
 
     agent {
@@ -7,7 +9,6 @@ pipeline {
     options {
         timeout(time: 60, unit: 'MINUTES')
         disableConcurrentBuilds()
-        timestamps()
     }
 
     tools {
@@ -154,4 +155,5 @@ pipeline {
 
     }
 
-}
+} // end of pipeline
+} // end of timestamps wrapper
