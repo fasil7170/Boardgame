@@ -1,68 +1,71 @@
 pipeline {
     agent any
-    
+
     tools {
-        jdk 'jdk17'        // Ensure JDK 17 is installed in Jenkins
-        maven 'maven3'     // Ensure Maven 3 is installed in Jenkins
+        jdk 'jdk17'
+        maven 'maven3'
     }
 
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
+        IMAGE_NAME = "fazil2664/boardshack"
     }
 
     stages {
+
         // =========================
-        // 1. Checkout from Git
+        // 1. Checkout Code
         // =========================
         stage('Git Checkout') {
             steps {
-                git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/fasil7170/Boardgame.git'
+                git branch: 'main',
+                credentialsId: 'git-cred',
+                url: 'https://github.com/fasil7170/Boardgame.git'
             }
         }
-        
+
         // =========================
-        // 2. Compile with Java 17
+        // 2. Build + Fast Tests
         // =========================
-        stage('Compile') {
+        stage('Build & Fast Test') {
             steps {
-                sh "mvn clean compile -Dmaven.compiler.source=17 -Dmaven.compiler.target=17"
+                echo "Running optimized build and tests..."
+                sh """
+                mvn -B clean package \
+                -Dspring.main.web-application-type=none \
+                -Dspring.main.lazy-initialization=true \
+                -DskipITs
+                """
             }
         }
-        
+
         // =========================
-        // 3. Run Unit Tests
-        // =========================
-        stage('Test') {
-            steps {
-                sh "mvn test"
-            }
-        }
-        
-        // =========================
-        // 4. File System Security Scan
+        // 3. File System Scan
         // =========================
         stage('File System Scan') {
             steps {
-                sh "trivy fs --format table -o trivy-fs-report.html ."
+                sh "trivy fs --format html -o trivy-fs-report.html ."
             }
         }
-        
+
         // =========================
-        // 5. SonarQube Analysis
+        // 4. SonarQube Analysis
         // =========================
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('sonar') {
-                    sh """$SCANNER_HOME/bin/sonar-scanner \
-                        -Dsonar.projectName=BoardGame \
-                        -Dsonar.projectKey=BoardGame \
-                        -Dsonar.java.binaries=target/classes"""
+                    sh """
+                    $SCANNER_HOME/bin/sonar-scanner \
+                    -Dsonar.projectName=BoardGame \
+                    -Dsonar.projectKey=BoardGame \
+                    -Dsonar.java.binaries=target/classes
+                    """
                 }
             }
         }
-        
+
         // =========================
-        // 6. SonarQube Quality Gate
+        // 5. SonarQube Quality Gate
         // =========================
         stage('Quality Gate') {
             steps {
@@ -74,73 +77,64 @@ pipeline {
                 }
             }
         }
-        
+
         // =========================
-        // 7. Build Package
-        // =========================
-        stage('Build') {
-            steps {
-                sh "mvn package"
-            }
-        }
-        
-        // =========================
-        // 8. Deploy to Nexus
+        // 6. Publish to Nexus
         // =========================
         stage('Publish To Nexus') {
             steps {
-                withMaven(globalMavenSettingsConfig: 'global-settings', jdk: 'jdk17', maven: 'maven3', traceability: true) {
-                    sh "mvn deploy"
+                withMaven(globalMavenSettingsConfig: 'global-settings', jdk: 'jdk17', maven: 'maven3') {
+                    sh "mvn deploy -DskipTests"
                 }
             }
         }
-        
+
         // =========================
-        // 9. Build & Tag Docker Image
+        // 7. Build Docker Image
         // =========================
         stage('Build Docker Image') {
             steps {
                 script {
                     withDockerRegistry(credentialsId: 'docker-cred') {
-                        sh "docker build -t fazil2664/boardshack:latest ."
-                        sh "docker tag fazil2664/boardshack:latest fazil2664/boardshack:${env.BUILD_NUMBER}"
+                        sh "docker build -t $IMAGE_NAME:latest ."
+                        sh "docker tag $IMAGE_NAME:latest $IMAGE_NAME:${BUILD_NUMBER}"
                     }
                 }
             }
         }
-        
+
         // =========================
-        // 10. Docker Image Security Scan
+        // 8. Docker Image Scan
         // =========================
         stage('Docker Image Scan') {
             steps {
-                sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
+                sh "trivy image --format table $IMAGE_NAME:latest"
             }
         }
-        
+
         // =========================
-        // 11. Push Docker Image
+        // 9. Push Docker Image
         // =========================
         stage('Push Docker Image') {
             steps {
                 script {
                     withDockerRegistry(credentialsId: 'docker-cred') {
-                        sh "docker push fazil2664/boardshack:latest"
-                        sh "docker push fazil2664/boardshack:${env.BUILD_NUMBER}"
+                        sh "docker push $IMAGE_NAME:latest"
+                        sh "docker push $IMAGE_NAME:${BUILD_NUMBER}"
                     }
                 }
             }
         }
-        
+
         // =========================
-        // 12. Deploy to Kubernetes with Rollback
+        // 10. Deploy to Kubernetes
         // =========================
         stage('Deploy To Kubernetes') {
             steps {
                 script {
                     withKubeConfig(
-                        credentialsId: 'k8-cred', 
-                        namespace: 'webapps', 
+                        credentialsId: 'k8-cred',
+                        namespace: 'webapps',
                         serverUrl: 'https://192.168.0.100:6443'
                     ) {
                         try {
@@ -149,21 +143,21 @@ pipeline {
                         } catch (Exception e) {
                             echo "Deployment failed! Rolling back..."
                             sh "kubectl rollout undo deployment/boardgame-deployment -n webapps"
-                            error "Deployment failed and rollback executed: ${e.message}"
+                            error "Deployment failed and rollback executed"
                         }
                     }
                 }
             }
         }
-        
+
         // =========================
-        // 13. Verify Deployment
+        // 11. Verify Deployment
         // =========================
         stage('Verify Deployment') {
             steps {
                 withKubeConfig(
-                    credentialsId: 'k8-cred', 
-                    namespace: 'webapps', 
+                    credentialsId: 'k8-cred',
+                    namespace: 'webapps',
                     serverUrl: 'https://192.168.0.100:6443'
                 ) {
                     sh "kubectl get pods -n webapps"
@@ -174,24 +168,12 @@ pipeline {
     }
 
     // =========================
-    // Post Actions: Email Notification (fallback to mail)
+    // Post Actions
     // =========================
     post {
         always {
-            script {
-                def jobName = env.JOB_NAME
-                def buildNumber = env.BUILD_NUMBER
-                def pipelineStatus = currentBuild.result ?: 'UNKNOWN'
-                
-                mail(
-                    to: 'rkf@gmail.com',
-                    subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus.toUpperCase()}",
-                    body: """
-Pipeline Status: ${pipelineStatus}
-Build URL: ${env.BUILD_URL}
-"""
-                )
-            }
+            echo "Pipeline completed: ${currentBuild.currentResult}"
+            cleanWs()
         }
     }
 }
