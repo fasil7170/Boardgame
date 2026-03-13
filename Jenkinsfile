@@ -1,15 +1,20 @@
 pipeline {
     agent {
         kubernetes {
-            label 'boardgame-single-agent'
-            defaultContainer 'agent'
+            label 'boardgame-agent'
+            defaultContainer 'maven'
             yaml """
 apiVersion: v1
 kind: Pod
 spec:
   containers:
-  - name: agent
-    image: myregistry/my-jenkins-agent:latest
+  - name: maven
+    image: maven:3.9.2-jdk-17
+    command:
+    - cat
+    tty: true
+  - name: docker
+    image: docker:24.0.5
     command:
     - cat
     tty: true
@@ -18,11 +23,11 @@ spec:
     }
 
     environment {
-        SCANNER_HOME = "/opt/sonar-scanner" // adjust if your image has Sonar Scanner elsewhere
-        DOCKER_CLI = "/usr/bin/docker"      // adjust if needed
+        SCANNER_HOME = '/tmp/sonar-scanner'
     }
 
     stages {
+
         stage('Git Checkout') {
             steps {
                 git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/fasil7170/Boardgame.git'
@@ -31,31 +36,43 @@ spec:
 
         stage('Compile') {
             steps {
-                sh "mvn clean compile"
+                container('maven') {
+                    sh 'mvn compile'
+                }
             }
         }
 
         stage('Test') {
             steps {
-                sh "mvn test"
+                container('maven') {
+                    sh 'mvn test'
+                }
             }
         }
 
-        stage('File System Scan') {
+        stage('Trivy File Scan') {
             steps {
-                sh "trivy fs --format table -o trivy-fs-report.html ."
+                container('maven') {
+                    sh '''
+                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
+                        ./trivy fs --format table -o trivy-fs-report.html .
+                    '''
+                }
             }
         }
 
         stage('SonarQube Analysis') {
             steps {
-                withSonarQubeEnv('sonar') {
-                    sh """
-                        $SCANNER_HOME/bin/sonar-scanner \
-                        -Dsonar.projectName=BoardGame \
-                        -Dsonar.projectKey=BoardGame \
-                        -Dsonar.java.binaries=.
-                    """
+                container('maven') {
+                    sh '''
+                        curl -L -o sonar-scanner.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.14.0.61720-linux.zip
+                        unzip sonar-scanner.zip -d /tmp/
+                        export PATH=$SCANNER_HOME/bin:$PATH
+                        /tmp/sonar-scanner-5.14.0.61720-linux/bin/sonar-scanner \
+                            -Dsonar.projectKey=BoardGame \
+                            -Dsonar.projectName=BoardGame \
+                            -Dsonar.java.binaries=.
+                    '''
                 }
             }
         }
@@ -68,56 +85,46 @@ spec:
             }
         }
 
-        stage('Build') {
+        stage('Build & Package') {
             steps {
-                sh "mvn package"
-            }
-        }
-
-        stage('Publish To Nexus') {
-            steps {
-                withMaven(globalMavenSettingsConfig: 'global-settings', jdk: 'jdk17', maven: 'maven3', traceability: true) {
-                    sh "mvn deploy"
+                container('maven') {
+                    sh 'mvn package'
                 }
             }
         }
 
-        stage('Build & Tag Docker Image') {
+        stage('Build & Push Docker Image') {
             steps {
-                script {
-                    sh "$DOCKER_CLI build -t fazil2664/boardshack:latest ."
+                container('docker') {
+                    withDockerRegistry(credentialsId: 'docker-cred', url: '') {
+                        sh '''
+                            docker build -t fazil2664/boardshack:latest .
+                            docker push fazil2664/boardshack:latest
+                        '''
+                    }
                 }
             }
         }
 
-        stage('Docker Image Scan') {
+        stage('Trivy Docker Scan') {
             steps {
-                sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
-            }
-        }
-
-        stage('Push Docker Image') {
-            steps {
-                script {
-                    sh "$DOCKER_CLI login -u USER -p PASS" // Or use withCredentials if secret
-                    sh "$DOCKER_CLI push fazil2664/boardshack:latest"
+                container('docker') {
+                    sh '''
+                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
+                        ./trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest
+                    '''
                 }
             }
         }
 
-        stage('Deploy To Kubernetes') {
+        stage('Deploy to Kubernetes') {
             steps {
-                withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps', serverUrl: 'https://192.168.0.100:6443') {
-                    sh "kubectl apply -f deployment-service.yaml"
-                }
-            }
-        }
-
-        stage('Verify Deployment') {
-            steps {
-                withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps', serverUrl: 'https://192.168.0.100:6443') {
-                    sh "kubectl get pods -n webapps"
-                    sh "kubectl get svc -n webapps"
+                container('docker') {
+                    withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
+                        sh 'kubectl apply -f deployment-service.yaml'
+                        sh 'kubectl get pods -n webapps'
+                        sh 'kubectl get svc -n webapps'
+                    }
                 }
             }
         }
@@ -126,8 +133,23 @@ spec:
     post {
         always {
             script {
-                def status = currentBuild.result ?: 'UNKNOWN'
-                echo "Pipeline finished with status: ${status}"
+                def status = currentBuild.currentResult
+                def body = """
+                <html>
+                <body>
+                <h2>BoardGame Pipeline - Build #${env.BUILD_NUMBER}</h2>
+                <p>Status: ${status}</p>
+                <p>Console Output: <a href="${env.BUILD_URL}">${env.BUILD_URL}</a></p>
+                </body>
+                </html>
+                """
+                emailext (
+                    subject: "BoardGame Build #${env.BUILD_NUMBER} - ${status}",
+                    body: body,
+                    to: 'rkf@gmail.com',
+                    mimeType: 'text/html',
+                    attachmentsPattern: 'trivy-image-report.html'
+                )
             }
         }
     }
