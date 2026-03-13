@@ -8,7 +8,7 @@ pipeline {
 
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
-        MAVEN_OPTS = "-Xmx1024m"   // Limit Maven memory usage
+        MAVEN_OPTS = "-Xmx1024m -XX:+UseG1GC"
     }
 
     stages {
@@ -20,7 +20,7 @@ pipeline {
                 git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/fasil7170/Boardgame.git'
             }
         }
-
+        
         // =========================
         // 2. Compile with Java 17
         // =========================
@@ -29,22 +29,22 @@ pipeline {
                 sh "mvn clean compile -Dmaven.compiler.source=17 -Dmaven.compiler.target=17"
             }
         }
-
+        
         // =========================
-        // 3. Run Unit Tests (optimized)
+        // 3. Run Unit Tests (Optimized)
         // =========================
         stage('Test') {
             steps {
-                echo "Running optimized Spring Boot tests"
                 sh """
-                mvn -B test \
-                -Dspring.main.lazy-initialization=true \
-                -Dspring.main.web-application-type=none \
-                -Dspring.jpa.open-in-view=false
+                mvn test \
+                    -B \
+                    -Dspring.main.lazy-initialization=true \
+                    -Dspring.main.web-application-type=none \
+                    -Dspring.jpa.open-in-view=false
                 """
             }
         }
-
+        
         // =========================
         // 4. File System Security Scan
         // =========================
@@ -53,7 +53,7 @@ pipeline {
                 sh "trivy fs --format table -o trivy-fs-report.html ."
             }
         }
-
+        
         // =========================
         // 5. SonarQube Analysis
         // =========================
@@ -67,7 +67,7 @@ pipeline {
                 }
             }
         }
-
+        
         // =========================
         // 6. SonarQube Quality Gate
         // =========================
@@ -81,7 +81,7 @@ pipeline {
                 }
             }
         }
-
+        
         // =========================
         // 7. Build Package
         // =========================
@@ -90,7 +90,7 @@ pipeline {
                 sh "mvn package"
             }
         }
-
+        
         // =========================
         // 8. Deploy to Nexus
         // =========================
@@ -101,7 +101,7 @@ pipeline {
                 }
             }
         }
-
+        
         // =========================
         // 9. Build & Tag Docker Image
         // =========================
@@ -115,7 +115,7 @@ pipeline {
                 }
             }
         }
-
+        
         // =========================
         // 10. Docker Image Security Scan
         // =========================
@@ -124,7 +124,7 @@ pipeline {
                 sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
             }
         }
-
+        
         // =========================
         // 11. Push Docker Image
         // =========================
@@ -138,7 +138,7 @@ pipeline {
                 }
             }
         }
-
+        
         // =========================
         // 12. Deploy to Kubernetes with Rollback
         // =========================
@@ -162,7 +162,7 @@ pipeline {
                 }
             }
         }
-
+        
         // =========================
         // 13. Verify Deployment
         // =========================
@@ -180,28 +180,17 @@ pipeline {
         }
     }
 
-    // =========================
-    // Post Actions: Email Notification
-    // =========================
     post {
         always {
             script {
-                def jobName = env.JOB_NAME
-                def buildNumber = env.BUILD_NUMBER
-                def pipelineStatus = currentBuild.result ?: 'UNKNOWN'
-
-                // Make sure your SMTP server is configured or comment this out
                 try {
                     mail(
                         to: 'rkf@gmail.com',
-                        subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus.toUpperCase()}",
-                        body: """
-Pipeline Status: ${pipelineStatus}
-Build URL: ${env.BUILD_URL}
-"""
+                        subject: "${env.JOB_NAME} - Build ${env.BUILD_NUMBER} - ${currentBuild.currentResult}",
+                        body: "Pipeline Status: ${currentBuild.currentResult}\nBuild URL: ${env.BUILD_URL}"
                     )
                 } catch (Exception e) {
-                    echo "Mail failed: ${e.message}"
+                    echo "Email skipped: ${e.message}"
                 }
             }
         }
