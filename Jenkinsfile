@@ -11,27 +11,27 @@ metadata:
     app: jenkins-agent
 spec:
   imagePullSecrets:
-    - name: dockerhub-secret # optional, if using private images
+    - name: dockerhub-secret  # optional for private images
   containers:
     - name: maven
       image: maven:3.9.4-eclipse-temurin-17
-      command:
-        - cat
+      imagePullPolicy: IfNotPresent
+      command: ["cat"]
       tty: true
     - name: docker
       image: docker:24.0.2-cli
-      command:
-        - cat
+      imagePullPolicy: IfNotPresent
+      command: ["cat"]
       tty: true
     - name: trivy
       image: aquasec/trivy:0.43.0
-      command:
-        - cat
+      imagePullPolicy: IfNotPresent
+      command: ["cat"]
       tty: true
     - name: sonar-scanner
       image: sonarsource/sonar-scanner-cli:5.14.0.61720
-      command:
-        - cat
+      imagePullPolicy: IfNotPresent
+      command: ["cat"]
       tty: true
 """
         }
@@ -48,7 +48,7 @@ spec:
 
     options {
         timeout(time: 60, unit: 'MINUTES')
-        retry(2) // Retry the pipeline twice in case of transient pod/image issues
+        retry(2)  // retry pipeline for transient image/pod errors
     }
 
     stages {
@@ -111,8 +111,7 @@ spec:
                 container('docker') {
                     script {
                         def imageTag = "fazil2664/boardshack:${env.BUILD_NUMBER}"
-                        
-                        // Docker login + build + push
+
                         withDockerRegistry(credentialsId: 'docker-cred', url: 'https://index.docker.io/v1/') {
                             sh "docker build -t ${imageTag} . || echo 'Docker build failed'"
                             sh "docker push ${imageTag} || echo 'Docker push failed'"
@@ -144,7 +143,7 @@ spec:
         always {
             script {
                 echo "Pipeline finished. Status: ${currentBuild.currentResult}"
-                // Optional: email, only if SMTP is configured
+                // Optional email step (requires valid SMTP)
                 // mail(to: 'rkf@gmail.com', subject: "Build ${currentBuild.fullDisplayName}", body: "Status: ${currentBuild.currentResult}")
             }
         }
