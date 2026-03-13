@@ -1,5 +1,6 @@
 pipeline {
 
+```
 agent any
 
 options {
@@ -20,9 +21,6 @@ environment {
 
 stages {
 
-    // =========================
-    // 1. Checkout Source Code
-    // =========================
     stage('Checkout') {
         steps {
             git branch: 'main',
@@ -31,9 +29,6 @@ stages {
         }
     }
 
-    // =========================
-    // 2. Compile Application
-    // =========================
     stage('Compile') {
         steps {
             sh '''
@@ -44,9 +39,6 @@ stages {
         }
     }
 
-    // =========================
-    // 3. Run Unit Tests
-    // =========================
     stage('Unit Tests') {
         steps {
             sh '''
@@ -60,9 +52,6 @@ stages {
         }
     }
 
-    // =========================
-    // 4. Security Scanning
-    // =========================
     stage('Security Scans') {
         parallel {
 
@@ -84,9 +73,6 @@ stages {
         }
     }
 
-    // =========================
-    // 5. SonarQube Analysis
-    // =========================
     stage('SonarQube Analysis') {
         steps {
             withSonarQubeEnv('sonar') {
@@ -100,9 +86,6 @@ stages {
         }
     }
 
-    // =========================
-    // 6. Quality Gate
-    // =========================
     stage('Quality Gate') {
         steps {
             script {
@@ -115,18 +98,12 @@ stages {
         }
     }
 
-    // =========================
-    // 7. Package Application
-    // =========================
     stage('Package') {
         steps {
             sh 'mvn package -DskipTests'
         }
     }
 
-    // =========================
-    // 8. Publish Artifact to Nexus
-    // =========================
     stage('Publish to Nexus') {
         steps {
             withMaven(
@@ -140,9 +117,6 @@ stages {
         }
     }
 
-    // =========================
-    // 9. Push Docker Image
-    // =========================
     stage('Push Docker Image') {
         steps {
             script {
@@ -159,9 +133,6 @@ stages {
         }
     }
 
-    // =========================
-    // 10. Deploy to Kubernetes
-    // =========================
     stage('Deploy to Kubernetes') {
         steps {
             script {
@@ -192,9 +163,6 @@ stages {
         }
     }
 
-    // =========================
-    // 11. Verify Deployment
-    // =========================
     stage('Verify Deployment') {
         steps {
 
@@ -202,4 +170,31 @@ stages {
                 credentialsId: 'k8-cred',
                 namespace: 'webapps',
                 serverUrl: 'https://192.168.0.100:6443'
+            ) {
+
+                sh 'kubectl get pods -n webapps'
+                sh 'kubectl get svc -n webapps'
+
+            }
+
+        }
+    }
+
+}
+
+post {
+
+    always {
+        script {
+            mail(
+                to: 'rkf@gmail.com',
+                subject: "${env.JOB_NAME} - Build ${env.BUILD_NUMBER}",
+                body: "Build Status: ${currentBuild.currentResult}\nBuild URL: ${env.BUILD_URL}"
             )
+        }
+    }
+
+}
+```
+
+}
