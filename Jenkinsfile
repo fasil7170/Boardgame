@@ -6,7 +6,11 @@ pipeline {
             yaml """
 apiVersion: v1
 kind: Pod
+metadata:
+  name: jenkins-agent
 spec:
+  imagePullSecrets:
+  - name: dockerhub-secret   # optional, for Docker Hub auth if rate-limited
   containers:
   - name: maven
     image: maven:3.9.4-eclipse-temurin-17
@@ -42,7 +46,6 @@ spec:
     }
 
     stages {
-
         stage('Git Checkout') {
             steps {
                 git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/fasil7170/Boardgame.git'
@@ -155,7 +158,6 @@ spec:
 </html>
 """
 
-                // Use built-in mail step instead of emailext
                 mail to: 'rkf@gmail.com',
                      subject: "${jobName} - Build #${buildNumber} - ${pipelineStatus.toUpperCase()}",
                      body: body
