@@ -1,165 +1,157 @@
 pipeline {
 
-
-agent any
-
-options {
-    timeout(time: 60, unit: 'MINUTES')
-    disableConcurrentBuilds()
-}
-
-tools {
-    jdk 'jdk17'
-    maven 'maven3'
-}
-
-environment {
-    IMAGE_NAME = "fazil2664/boardshack"
-    SCANNER_HOME = tool 'sonar-scanner'
-}
-
-stages {
-
-    stage('Checkout Code') {
-        steps {
-            git branch: 'main',
-            credentialsId: 'git-cred',
-            url: 'https://github.com/fasil7170/Boardgame.git'
-        }
+    agent {
+        label 'stable-node' // Use a stable agent to avoid disconnects
     }
 
-    stage('Compile') {
-        steps {
-            sh 'mvn clean compile'
-        }
+    options {
+        timeout(time: 60, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        timestamps()
     }
 
-    stage('Unit Test') {
-        steps {
-            sh 'mvn test'
-        }
+    tools {
+        jdk 'jdk17'
+        maven 'maven3'
     }
 
-    stage('SonarQube Analysis') {
-        steps {
-            withSonarQubeEnv('sonar') {
-                sh """
-                ${SCANNER_HOME}/bin/sonar-scanner \
-                -Dsonar.projectKey=BoardGame \
-                -Dsonar.projectName=BoardGame \
-                -Dsonar.java.binaries=target/classes
-                """
+    environment {
+        IMAGE_NAME = "fazil2664/boardshack"
+        SCANNER_HOME = tool 'sonar-scanner'
+    }
+
+    stages {
+
+        stage('Checkout Code') {
+            steps {
+                git branch: 'main',
+                    credentialsId: 'git-cred',
+                    url: 'https://github.com/fasil7170/Boardgame.git'
             }
         }
-    }
 
-    stage('Quality Gate') {
-        steps {
-            script {
-                waitForQualityGate abortPipeline: true
+        stage('Build & Test') {
+            steps {
+                sh 'mvn clean verify' // compile + test + package
             }
         }
-    }
 
-    stage('Build Artifact') {
-        steps {
-            sh 'mvn package -DskipTests'
-        }
-    }
-
-    stage('Publish to Nexus') {
-        steps {
-            withMaven(
-                maven: 'maven3',
-                jdk: 'jdk17',
-                globalMavenSettingsConfig: 'global-settings'
-            ) {
-                sh 'mvn deploy -DskipTests'
-            }
-        }
-    }
-
-    stage('Build Docker Image') {
-        steps {
-            sh "docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} ."
-            sh "docker tag ${IMAGE_NAME}:${BUILD_NUMBER} ${IMAGE_NAME}:latest"
-        }
-    }
-
-    stage('Trivy Security Scan') {
-        steps {
-            sh "trivy image ${IMAGE_NAME}:${BUILD_NUMBER}"
-        }
-    }
-
-    stage('Push Docker Image') {
-        steps {
-            script {
-                withDockerRegistry(credentialsId: 'docker-cred') {
-
-                    sh "docker push ${IMAGE_NAME}:${BUILD_NUMBER}"
-                    sh "docker push ${IMAGE_NAME}:latest"
-
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar') {
+                    sh """
+                    ${SCANNER_HOME}/bin/sonar-scanner \
+                    -Dsonar.projectKey=BoardGame \
+                    -Dsonar.projectName=BoardGame \
+                    -Dsonar.java.binaries=target/classes
+                    """
                 }
             }
         }
-    }
 
-    stage('Deploy to Kubernetes') {
-        steps {
-
-            withKubeConfig(
-                credentialsId: 'k8-cred',
-                namespace: 'webapps',
-                serverUrl: 'https://192.168.0.100:6443'
-            ) {
-
-                sh 'kubectl apply -f deployment-service.yaml'
-                sh 'kubectl rollout status deployment/boardgame-deployment -n webapps'
-
+        stage('Quality Gate') {
+            steps {
+                script {
+                    waitForQualityGate abortPipeline: true
+                }
             }
-
         }
-    }
 
-    stage('Verify Deployment') {
-        steps {
-
-            withKubeConfig(
-                credentialsId: 'k8-cred',
-                namespace: 'webapps',
-                serverUrl: 'https://192.168.0.100:6443'
-            ) {
-
-                sh 'kubectl get pods -n webapps'
-                sh 'kubectl get svc -n webapps'
-
+        stage('Publish to Nexus') {
+            steps {
+                withMaven(
+                    maven: 'maven3',
+                    jdk: 'jdk17',
+                    globalMavenSettingsConfig: 'global-settings'
+                ) {
+                    sh 'mvn deploy -DskipTests'
+                }
             }
-
         }
+
+        stage('Build Docker Image') {
+            steps {
+                sh "docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} ."
+                sh "docker tag ${IMAGE_NAME}:${BUILD_NUMBER} ${IMAGE_NAME}:latest"
+            }
+        }
+
+        stage('Trivy Security Scan') {
+            steps {
+                sh """
+                trivy image \
+                --severity CRITICAL,HIGH \
+                --exit-code 1 \
+                ${IMAGE_NAME}:${BUILD_NUMBER}
+                """
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred') {
+                        sh "docker push ${IMAGE_NAME}:${BUILD_NUMBER}"
+                        sh "docker push ${IMAGE_NAME}:latest"
+                    }
+                }
+            }
+        }
+
+        stage('Docker Cleanup') {
+            steps {
+                sh 'docker system prune -f'
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                retry(3) { // retry in case of temporary API failure
+                    withKubeConfig(
+                        credentialsId: 'k8-cred',
+                        namespace: 'webapps',
+                        serverUrl: 'https://192.168.0.100:6443'
+                    ) {
+                        sh 'kubectl apply -f deployment-service.yaml'
+                        sh 'kubectl rollout status deployment/boardgame-deployment -n webapps'
+                    }
+                }
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                withKubeConfig(
+                    credentialsId: 'k8-cred',
+                    namespace: 'webapps',
+                    serverUrl: 'https://192.168.0.100:6443'
+                ) {
+                    sh 'kubectl get pods -n webapps'
+                    sh 'kubectl get svc -n webapps'
+                }
+            }
+        }
+
     }
 
-}
+    post {
 
-post {
+        success {
+            mail(
+                to: 'rkf@gmail.com',
+                subject: "SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: "Build completed successfully.\n${env.BUILD_URL}"
+            )
+        }
 
-    success {
-        mail(
-            to: 'rkf@gmail.com',
-            subject: "SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-            body: "Build completed successfully.\n${env.BUILD_URL}"
-        )
+        failure {
+            mail(
+                to: 'rkftrips@gmail.com',
+                subject: "FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: "Build failed.\n${env.BUILD_URL}"
+            )
+        }
+
     }
-
-    failure {
-        mail(
-            to: 'rkftrips@gmail.com',
-            subject: "FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-            body: "Build failed.\n${env.BUILD_URL}"
-        )
-    }
-
-}
-
 
 }
