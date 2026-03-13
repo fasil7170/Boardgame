@@ -1,35 +1,15 @@
 pipeline {
     agent {
         kubernetes {
-            label 'jenkins-agent'
-            defaultContainer 'jnlp'
+            label 'boardgame-single-agent'
+            defaultContainer 'agent'
             yaml """
 apiVersion: v1
 kind: Pod
 spec:
   containers:
-  - name: maven
-    image: maven:3.9.4-openjdk-17
-    command:
-    - cat
-    tty: true
-  - name: docker
-    image: docker:24.0.2-dind
-    securityContext:
-      privileged: true
-    command:
-    - dockerd-entrypoint.sh
-    args:
-    - "--host=tcp://0.0.0.0:2375"
-    - "--host=unix:///var/run/docker.sock"
-    tty: true
-  - name: sonar-scanner
-    image: sonarsource/sonar-scanner-cli:5.13.0
-    command:
-    - cat
-    tty: true
-  - name: trivy
-    image: aquasec/trivy:0.44.0
+  - name: agent
+    image: myregistry/my-jenkins-agent:latest
     command:
     - cat
     tty: true
@@ -37,17 +17,12 @@ spec:
         }
     }
 
-    tools {
-        jdk 'jdk17'
-        maven 'maven3'
-    }
-
     environment {
-        SCANNER_HOME = tool 'sonar-scanner'
+        SCANNER_HOME = "/opt/sonar-scanner" // adjust if your image has Sonar Scanner elsewhere
+        DOCKER_CLI = "/usr/bin/docker"      // adjust if needed
     }
 
     stages {
-
         stage('Git Checkout') {
             steps {
                 git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/fasil7170/Boardgame.git'
@@ -56,51 +31,31 @@ spec:
 
         stage('Compile') {
             steps {
-                container('maven') {
-                    sh "mvn compile"
-                }
+                sh "mvn clean compile"
             }
         }
 
         stage('Test') {
             steps {
-                container('maven') {
-                    sh "mvn test"
-                }
+                sh "mvn test"
             }
         }
 
         stage('File System Scan') {
             steps {
-                script {
-                    try {
-                        container('trivy') {
-                            sh "trivy fs --format table -o trivy-fs-report.html ."
-                        }
-                    } catch (err) {
-                        echo "Trivy FS scan failed, skipping this stage: ${err}"
-                    }
-                }
+                sh "trivy fs --format table -o trivy-fs-report.html ."
             }
         }
 
         stage('SonarQube Analysis') {
             steps {
-                script {
-                    try {
-                        container('sonar-scanner') {
-                            withSonarQubeEnv('sonar') {
-                                sh """
-                                    $SCANNER_HOME/bin/sonar-scanner \
-                                    -Dsonar.projectName=BoardGame \
-                                    -Dsonar.projectKey=BoardGame \
-                                    -Dsonar.java.binaries=.
-                                """
-                            }
-                        }
-                    } catch (err) {
-                        echo "SonarQube analysis failed, skipping this stage: ${err}"
-                    }
+                withSonarQubeEnv('sonar') {
+                    sh """
+                        $SCANNER_HOME/bin/sonar-scanner \
+                        -Dsonar.projectName=BoardGame \
+                        -Dsonar.projectKey=BoardGame \
+                        -Dsonar.java.binaries=.
+                    """
                 }
             }
         }
@@ -108,82 +63,51 @@ spec:
         stage('Quality Gate') {
             steps {
                 script {
-                    try {
-                        waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
-                    } catch (err) {
-                        echo "Quality Gate check failed: ${err}"
-                    }
+                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
                 }
             }
         }
 
         stage('Build') {
             steps {
-                container('maven') {
-                    sh "mvn package"
-                }
+                sh "mvn package"
             }
         }
 
         stage('Publish To Nexus') {
             steps {
-                container('maven') {
-                    withMaven(globalMavenSettingsConfig: 'global-settings', jdk: 'jdk17', maven: 'maven3', traceability: true) {
-                        sh "mvn deploy"
-                    }
+                withMaven(globalMavenSettingsConfig: 'global-settings', jdk: 'jdk17', maven: 'maven3', traceability: true) {
+                    sh "mvn deploy"
                 }
             }
         }
 
         stage('Build & Tag Docker Image') {
             steps {
-                container('docker') {
-                    script {
-                        try {
-                            withDockerRegistry(credentialsId: 'docker-cred') {
-                                sh "docker build -t fazil2664/boardshack:latest ."
-                            }
-                        } catch (err) {
-                            echo "Docker build failed: ${err}"
-                        }
-                    }
+                script {
+                    sh "$DOCKER_CLI build -t fazil2664/boardshack:latest ."
                 }
             }
         }
 
         stage('Docker Image Scan') {
             steps {
-                script {
-                    try {
-                        container('trivy') {
-                            sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
-                        }
-                    } catch (err) {
-                        echo "Trivy image scan failed, skipping: ${err}"
-                    }
-                }
+                sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
             }
         }
 
         stage('Push Docker Image') {
             steps {
-                container('docker') {
-                    script {
-                        try {
-                            withDockerRegistry(credentialsId: 'docker-cred') {
-                                sh "docker push fazil2664/boardshack:latest"
-                            }
-                        } catch (err) {
-                            echo "Docker push failed: ${err}"
-                        }
-                    }
+                script {
+                    sh "$DOCKER_CLI login -u USER -p PASS" // Or use withCredentials if secret
+                    sh "$DOCKER_CLI push fazil2664/boardshack:latest"
                 }
             }
         }
 
         stage('Deploy To Kubernetes') {
             steps {
-                withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
+                withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps', serverUrl: 'https://192.168.0.100:6443') {
                     sh "kubectl apply -f deployment-service.yaml"
                 }
             }
@@ -191,7 +115,7 @@ spec:
 
         stage('Verify Deployment') {
             steps {
-                withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
+                withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps', serverUrl: 'https://192.168.0.100:6443') {
                     sh "kubectl get pods -n webapps"
                     sh "kubectl get svc -n webapps"
                 }
@@ -202,34 +126,8 @@ spec:
     post {
         always {
             script {
-                def jobName = env.JOB_NAME
-                def buildNumber = env.BUILD_NUMBER
-                def pipelineStatus = currentBuild.result ?: 'UNKNOWN'
-                def bannerColor = pipelineStatus.toUpperCase() == 'SUCCESS' ? 'green' : 'red'
-
-                def body = """
-                    <html>
-                    <body>
-                    <div style="border: 4px solid ${bannerColor}; padding: 10px;">
-                    <h2>${jobName} - Build ${buildNumber}</h2>
-                    <div style="background-color: ${bannerColor}; padding: 10px;">
-                    <h3 style="color: white;">Pipeline Status: ${pipelineStatus.toUpperCase()}</h3>
-                    </div>
-                    <p>Check the <a href="${BUILD_URL}">console output</a>.</p>
-                    </div>
-                    </body>
-                    </html>
-                """
-
-                emailext (
-                    subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus.toUpperCase()}",
-                    body: body,
-                    to: 'rkf@gmail.com',
-                    from: 'jenkins@example.com',
-                    replyTo: 'jenkins@example.com',
-                    mimeType: 'text/html',
-                    attachmentsPattern: 'trivy-image-report.html'
-                )
+                def status = currentBuild.result ?: 'UNKNOWN'
+                echo "Pipeline finished with status: ${status}"
             }
         }
     }
