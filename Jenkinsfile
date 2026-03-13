@@ -1,12 +1,13 @@
 pipeline {
 
     agent {
-        label 'stable-node' // stable agent to prevent disconnects
+        label 'stable-node' // Use a stable agent to avoid disconnects
     }
 
     options {
         timeout(time: 60, unit: 'MINUTES')
         disableConcurrentBuilds()
+        timestamps()
     }
 
     tools {
@@ -23,91 +24,75 @@ pipeline {
 
         stage('Checkout Code') {
             steps {
-                wrap([$class: 'TimestamperBuildWrapper']) {
-                    git branch: 'main',
-                        credentialsId: 'git-cred',
-                        url: 'https://github.com/fasil7170/Boardgame.git'
-                }
+                git branch: 'main',
+                    credentialsId: 'git-cred',
+                    url: 'https://github.com/fasil7170/Boardgame.git'
             }
         }
 
         stage('Build & Test') {
             steps {
-                wrap([$class: 'TimestamperBuildWrapper']) {
-                    sh 'mvn clean verify'
-                }
+                sh 'mvn clean verify' // compile + test + package
             }
         }
 
         stage('SonarQube Analysis') {
             steps {
-                wrap([$class: 'TimestamperBuildWrapper']) {
-                    withSonarQubeEnv('sonar') {
-                        sh """
-                        ${SCANNER_HOME}/bin/sonar-scanner \
-                        -Dsonar.projectKey=BoardGame \
-                        -Dsonar.projectName=BoardGame \
-                        -Dsonar.java.binaries=target/classes
-                        """
-                    }
+                withSonarQubeEnv('sonar') {
+                    sh """
+                    ${SCANNER_HOME}/bin/sonar-scanner \
+                    -Dsonar.projectKey=BoardGame \
+                    -Dsonar.projectName=BoardGame \
+                    -Dsonar.java.binaries=target/classes
+                    """
                 }
             }
         }
 
         stage('Quality Gate') {
             steps {
-                wrap([$class: 'TimestamperBuildWrapper']) {
-                    script {
-                        waitForQualityGate abortPipeline: true
-                    }
+                script {
+                    waitForQualityGate abortPipeline: true
                 }
             }
         }
 
         stage('Publish to Nexus') {
             steps {
-                wrap([$class: 'TimestamperBuildWrapper']) {
-                    withMaven(
-                        maven: 'maven3',
-                        jdk: 'jdk17',
-                        globalMavenSettingsConfig: 'global-settings'
-                    ) {
-                        sh 'mvn deploy -DskipTests'
-                    }
+                withMaven(
+                    maven: 'maven3',
+                    jdk: 'jdk17',
+                    globalMavenSettingsConfig: 'global-settings'
+                ) {
+                    sh 'mvn deploy -DskipTests'
                 }
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                wrap([$class: 'TimestamperBuildWrapper']) {
-                    sh "docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} ."
-                    sh "docker tag ${IMAGE_NAME}:${BUILD_NUMBER} ${IMAGE_NAME}:latest"
-                }
+                sh "docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} ."
+                sh "docker tag ${IMAGE_NAME}:${BUILD_NUMBER} ${IMAGE_NAME}:latest"
             }
         }
 
         stage('Trivy Security Scan') {
             steps {
-                wrap([$class: 'TimestamperBuildWrapper']) {
-                    sh """
-                    trivy image \
-                    --severity CRITICAL,HIGH \
-                    --exit-code 1 \
-                    ${IMAGE_NAME}:${BUILD_NUMBER}
-                    """
-                }
+                sh """
+                trivy image \
+                --severity CRITICAL,HIGH \
+                --exit-code 1 \
+                ${IMAGE_NAME}:${BUILD_NUMBER}
+                """
             }
         }
 
         stage('Push Docker Image') {
             steps {
-                wrap([$class: 'TimestamperBuildWrapper']) {
-                    script {
-                        withDockerRegistry(credentialsId: 'docker-cred') {
-                            sh "docker push ${IMAGE_NAME}:${BUILD_NUMBER}"
-                            sh "docker push ${IMAGE_NAME}:latest"
-                        }
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred') {
+                        sh "docker push ${IMAGE_NAME}:${BUILD_NUMBER}"
+                        sh "docker push ${IMAGE_NAME}:latest"
                     }
                 }
             }
@@ -115,24 +100,20 @@ pipeline {
 
         stage('Docker Cleanup') {
             steps {
-                wrap([$class: 'TimestamperBuildWrapper']) {
-                    sh 'docker system prune -f'
-                }
+                sh 'docker system prune -f'
             }
         }
 
         stage('Deploy to Kubernetes') {
             steps {
-                wrap([$class: 'TimestamperBuildWrapper']) {
-                    retry(3) { 
-                        withKubeConfig(
-                            credentialsId: 'k8-cred',
-                            namespace: 'webapps',
-                            serverUrl: 'https://192.168.0.100:6443'
-                        ) {
-                            sh 'kubectl apply -f deployment-service.yaml'
-                            sh 'kubectl rollout status deployment/boardgame-deployment -n webapps'
-                        }
+                retry(3) { // retry in case of temporary API failure
+                    withKubeConfig(
+                        credentialsId: 'k8-cred',
+                        namespace: 'webapps',
+                        serverUrl: 'https://192.168.0.100:6443'
+                    ) {
+                        sh 'kubectl apply -f deployment-service.yaml'
+                        sh 'kubectl rollout status deployment/boardgame-deployment -n webapps'
                     }
                 }
             }
@@ -140,15 +121,13 @@ pipeline {
 
         stage('Verify Deployment') {
             steps {
-                wrap([$class: 'TimestamperBuildWrapper']) {
-                    withKubeConfig(
-                        credentialsId: 'k8-cred',
-                        namespace: 'webapps',
-                        serverUrl: 'https://192.168.0.100:6443'
-                    ) {
-                        sh 'kubectl get pods -n webapps'
-                        sh 'kubectl get svc -n webapps'
-                    }
+                withKubeConfig(
+                    credentialsId: 'k8-cred',
+                    namespace: 'webapps',
+                    serverUrl: 'https://192.168.0.100:6443'
+                ) {
+                    sh 'kubectl get pods -n webapps'
+                    sh 'kubectl get svc -n webapps'
                 }
             }
         }
@@ -156,6 +135,7 @@ pipeline {
     }
 
     post {
+
         success {
             mail(
                 to: 'rkf@gmail.com',
@@ -171,6 +151,7 @@ pipeline {
                 body: "Build failed.\n${env.BUILD_URL}"
             )
         }
+
     }
 
 }
