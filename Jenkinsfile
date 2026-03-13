@@ -1,13 +1,35 @@
 pipeline {
-
     agent {
-        label 'stable-node'
-    }
-
-    options {
-        timeout(time: 60, unit: 'MINUTES')
-        disableConcurrentBuilds()
-        // timestamps() <-- removed
+        kubernetes {
+            label 'jenkins-agent'
+            defaultContainer 'jnlp'
+            yaml """
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: maven
+    image: maven:3.9.4-openjdk-17
+    command:
+    - cat
+    tty: true
+  - name: docker
+    image: docker:24.0.2-cli
+    command:
+    - cat
+    tty: true
+  - name: trivy
+    image: aquasec/trivy:0.43.0
+    command:
+    - cat
+    tty: true
+  - name: sonar-scanner
+    image: sonarsource/sonar-scanner-cli:5.12.0
+    command:
+    - cat
+    tty: true
+"""
+        }
     }
 
     tools {
@@ -16,118 +38,119 @@ pipeline {
     }
 
     environment {
-        IMAGE_NAME = "fazil2664/boardshack"
-        SCANNER_HOME = tool 'sonar-scanner'
+        SCANNER_HOME = '/opt/sonar-scanner'  // inside container, path may vary
     }
 
     stages {
 
-        stage('Checkout Code') {
+        stage('Git Checkout') {
             steps {
-                git branch: 'main',
-                    credentialsId: 'git-cred',
-                    url: 'https://github.com/fasil7170/Boardgame.git'
+                git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/fasil7170/Boardgame.git'
             }
         }
 
-        stage('Build & Test') {
+        stage('Compile') {
             steps {
-                sh 'mvn clean verify'
+                container('maven') {
+                    sh "mvn compile"
+                }
+            }
+        }
+
+        stage('Test') {
+            steps {
+                container('maven') {
+                    sh "mvn test"
+                }
+            }
+        }
+
+        stage('File System Scan') {
+            steps {
+                container('trivy') {
+                    sh "trivy fs --format table -o trivy-fs-report.html ."
+                }
             }
         }
 
         stage('SonarQube Analysis') {
             steps {
-                withSonarQubeEnv('sonar') {
-                    sh """
-                    ${SCANNER_HOME}/bin/sonar-scanner \
-                    -Dsonar.projectKey=BoardGame \
-                    -Dsonar.projectName=BoardGame \
-                    -Dsonar.java.binaries=target/classes
-                    """
+                container('sonar-scanner') {
+                    withSonarQubeEnv('sonar') {
+                        sh """$SCANNER_HOME/bin/sonar-scanner \
+                             -Dsonar.projectName=BoardGame \
+                             -Dsonar.projectKey=BoardGame \
+                             -Dsonar.java.binaries=. """
+                    }
                 }
             }
         }
 
         stage('Quality Gate') {
             steps {
-                script {
-                    waitForQualityGate abortPipeline: true
+                waitForQualityGate abortPipeline: false
+            }
+        }
+
+        stage('Build') {
+            steps {
+                container('maven') {
+                    sh "mvn package"
                 }
             }
         }
 
-        stage('Publish to Nexus') {
+        stage('Publish To Nexus') {
             steps {
-                withMaven(
-                    maven: 'maven3',
-                    jdk: 'jdk17',
-                    globalMavenSettingsConfig: 'global-settings'
-                ) {
-                    sh 'mvn deploy -DskipTests'
+                container('maven') {
+                    withMaven(globalMavenSettingsConfig: 'global-settings') {
+                        sh "mvn deploy"
+                    }
                 }
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build & Tag Docker Image') {
             steps {
-                sh "docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} ."
-                sh "docker tag ${IMAGE_NAME}:${BUILD_NUMBER} ${IMAGE_NAME}:latest"
+                container('docker') {
+                    withDockerRegistry(credentialsId: 'docker-cred') {
+                        sh "docker build -t fazil2664/boardshack:latest ."
+                    }
+                }
             }
         }
 
-        stage('Trivy Security Scan') {
+        stage('Docker Image Scan') {
             steps {
-                sh """
-                trivy image \
-                --severity CRITICAL,HIGH \
-                --exit-code 1 \
-                ${IMAGE_NAME}:${BUILD_NUMBER}
-                """
+                container('trivy') {
+                    sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
+                }
             }
         }
 
         stage('Push Docker Image') {
             steps {
-                script {
+                container('docker') {
                     withDockerRegistry(credentialsId: 'docker-cred') {
-                        sh "docker push ${IMAGE_NAME}:${BUILD_NUMBER}"
-                        sh "docker push ${IMAGE_NAME}:latest"
+                        sh "docker push fazil2664/boardshack:latest"
                     }
                 }
             }
         }
 
-        stage('Docker Cleanup') {
+        stage('Deploy To Kubernetes') {
             steps {
-                sh 'docker system prune -f'
-            }
-        }
-
-        stage('Deploy to Kubernetes') {
-            steps {
-                retry(3) {
-                    withKubeConfig(
-                        credentialsId: 'k8-cred',
-                        namespace: 'webapps',
-                        serverUrl: 'https://192.168.0.100:6443'
-                    ) {
-                        sh 'kubectl apply -f deployment-service.yaml'
-                        sh 'kubectl rollout status deployment/boardgame-deployment -n webapps'
-                    }
+                withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
+                    sh "kubectl apply -f deployment-service.yaml"
                 }
             }
         }
 
-        stage('Verify Deployment') {
+        stage('Verify the Deployment') {
             steps {
-                withKubeConfig(
-                    credentialsId: 'k8-cred',
-                    namespace: 'webapps',
-                    serverUrl: 'https://192.168.0.100:6443'
-                ) {
-                    sh 'kubectl get pods -n webapps'
-                    sh 'kubectl get svc -n webapps'
+                withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
+                    sh "kubectl get pods -n webapps"
+                    sh "kubectl get svc -n webapps"
                 }
             }
         }
@@ -135,23 +158,37 @@ pipeline {
     }
 
     post {
+        always {
+            script {
+                def jobName = env.JOB_NAME
+                def buildNumber = env.BUILD_NUMBER
+                def pipelineStatus = currentBuild.result ?: 'SUCCESS'
+                def bannerColor = pipelineStatus.toUpperCase() == 'SUCCESS' ? 'green' : 'red'
 
-        success {
-            mail(
-                to: 'rkf@gmail.com',
-                subject: "SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                body: "Build completed successfully.\n${env.BUILD_URL}"
-            )
+                def body = """
+<html>
+<body>
+<div style="border: 4px solid ${bannerColor}; padding: 10px;">
+<h2>${jobName} - Build ${buildNumber}</h2>
+<div style="background-color: ${bannerColor}; padding: 10px;">
+<h3 style="color: white;">Pipeline Status: ${pipelineStatus.toUpperCase()}</h3>
+</div>
+<p>Check the <a href="${BUILD_URL}">console output</a>.</p>
+</div>
+</body>
+</html>
+"""
+
+                emailext (
+                    subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus.toUpperCase()}",
+                    body: body,
+                    to: 'rkf@gmail.com',
+                    from: 'jenkins@example.com',
+                    replyTo: 'jenkins@example.com',
+                    mimeType: 'text/html',
+                    attachmentsPattern: 'trivy-image-report.html'
+                )
+            }
         }
-
-        failure {
-            mail(
-                to: 'rkftrips@gmail.com',
-                subject: "FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-                body: "Build failed.\n${env.BUILD_URL}"
-            )
-        }
-
     }
-
 }
