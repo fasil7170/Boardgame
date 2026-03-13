@@ -11,7 +11,7 @@ metadata:
     app: jenkins-agent
 spec:
   imagePullSecrets:
-    - name: dockerhub-secret  # optional for private images
+    - name: dockerhub-secret  # optional if using private registry
   containers:
     - name: maven
       image: maven:3.9.4-eclipse-temurin-17
@@ -29,7 +29,7 @@ spec:
       command: ["cat"]
       tty: true
     - name: sonar-scanner
-      image: sonarsource/sonar-scanner-cli:5.14.0.61720
+      image: sonarsource/sonar-scanner-cli:5.13.0.40407
       imagePullPolicy: IfNotPresent
       command: ["cat"]
       tty: true
@@ -48,7 +48,7 @@ spec:
 
     options {
         timeout(time: 60, unit: 'MINUTES')
-        retry(2)  // retry pipeline for transient image/pod errors
+        retry(2)  // retries for transient pod/image issues
     }
 
     stages {
@@ -143,7 +143,7 @@ spec:
         always {
             script {
                 echo "Pipeline finished. Status: ${currentBuild.currentResult}"
-                // Optional email step (requires valid SMTP)
+                // Optional: Email notifications (requires working SMTP)
                 // mail(to: 'rkf@gmail.com', subject: "Build ${currentBuild.fullDisplayName}", body: "Status: ${currentBuild.currentResult}")
             }
         }
