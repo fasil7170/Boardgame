@@ -203,4 +203,3 @@ stages {
                 namespace: 'webapps',
                 serverUrl: 'https://192.168.0.100:6443'
             ) {
-```
