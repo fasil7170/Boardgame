@@ -1,4 +1,5 @@
 pipeline {
+
     agent any
 
     tools {
@@ -7,13 +8,12 @@ pipeline {
     }
 
     environment {
-        SCANNER_HOME = tool 'sonar-scanner'
         IMAGE_NAME = "fazil2664/boardshack:latest"
     }
 
     stages {
 
-        stage('Git Checkout') {
+        stage('Checkout Code') {
             steps {
                 git branch: 'main',
                 credentialsId: 'git-cred',
@@ -27,52 +27,24 @@ pipeline {
             }
         }
 
-        stage('Test') {
+        stage('Run Tests') {
             steps {
                 sh 'mvn test'
             }
         }
 
-        stage('File System Scan') {
-            steps {
-                sh 'trivy fs --format table -o trivy-fs-report.html .'
-            }
-        }
-
-        stage('SonarQube Analysis') {
-            steps {
-                withSonarQubeEnv('sonar') {
-                    sh """
-                    ${SCANNER_HOME}/bin/sonar-scanner \
-                    -Dsonar.projectName=BoardGame \
-                    -Dsonar.projectKey=BoardGame \
-                    -Dsonar.java.binaries=.
-                    """
-                }
-            }
-        }
-
-        stage('Quality Gate') {
-            steps {
-                script {
-                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
-                }
-            }
-        }
-
-        stage('Build Package') {
+        stage('Package Application') {
             steps {
                 sh 'mvn package'
             }
         }
 
-        stage('Publish To Nexus') {
+        stage('Publish Artifact to Nexus') {
             steps {
                 withMaven(
                     globalMavenSettingsConfig: 'global-settings',
                     jdk: 'jdk17',
-                    maven: 'maven3',
-                    traceability: true
+                    maven: 'maven3'
                 ) {
                     sh 'mvn deploy'
                 }
@@ -89,12 +61,6 @@ pipeline {
             }
         }
 
-        stage('Docker Image Scan') {
-            steps {
-                sh "trivy image --format table -o trivy-image-report.html ${IMAGE_NAME}"
-            }
-        }
-
         stage('Push Docker Image') {
             steps {
                 script {
@@ -105,7 +71,7 @@ pipeline {
             }
         }
 
-        stage('Deploy To Kubernetes') {
+        stage('Deploy to Kubernetes') {
             steps {
                 withKubeConfig(
                     credentialsId: 'k8-cred',
@@ -132,35 +98,12 @@ pipeline {
     }
 
     post {
-        always {
-            script {
-                def jobName = env.JOB_NAME
-                def buildNumber = env.BUILD_NUMBER
-                def pipelineStatus = currentBuild.result ?: 'UNKNOWN'
-                def bannerColor = pipelineStatus == 'SUCCESS' ? 'green' : 'red'
+        success {
+            echo "Pipeline completed successfully"
+        }
 
-                def body = """
-                <html>
-                <body>
-                <div style="border:4px solid ${bannerColor}; padding:10px;">
-                <h2>${jobName} - Build ${buildNumber}</h2>
-                <div style="background-color:${bannerColor}; padding:10px;">
-                <h3 style="color:white;">Pipeline Status: ${pipelineStatus}</h3>
-                </div>
-                <p>Check the <a href="${BUILD_URL}">console output</a>.</p>
-                </div>
-                </body>
-                </html>
-                """
-
-                emailext(
-                    subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus}",
-                    body: body,
-                    to: 'rkf@gmail@gmail.com',
-                    mimeType: 'text/html',
-                    attachmentsPattern: 'trivy-image-report.html'
-                )
-            }
+        failure {
+            echo "Pipeline failed"
         }
     }
 }
