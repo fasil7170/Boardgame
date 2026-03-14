@@ -1,19 +1,13 @@
 pipeline {
     agent any
 
-    tools {
-        jdk 'jdk17'
-        maven 'maven3'
-    }
-
     environment {
-        SCANNER_HOME = tool 'sonar-scanner'
         IMAGE_NAME = "fazil2664/boardshack:latest"
     }
 
     stages {
 
-        stage('Git Checkout') {
+        stage('Checkout Code') {
             steps {
                 git branch: 'main',
                     credentialsId: 'git-cred',
@@ -21,7 +15,7 @@ pipeline {
             }
         }
 
-        stage('Compile') {
+        stage('Build') {
             steps {
                 sh 'mvn clean compile'
             }
@@ -33,9 +27,9 @@ pipeline {
             }
         }
 
-        stage('File System Scan') {
+        stage('Trivy File Scan') {
             steps {
-                sh 'trivy fs --format table -o trivy-fs-report.html .'
+                sh 'trivy fs .'
             }
         }
 
@@ -43,7 +37,7 @@ pipeline {
             steps {
                 withSonarQubeEnv('sonar') {
                     sh """
-                    ${SCANNER_HOME}/bin/sonar-scanner \
+                    sonar-scanner \
                     -Dsonar.projectName=BoardGame \
                     -Dsonar.projectKey=BoardGame \
                     -Dsonar.java.binaries=.
@@ -54,26 +48,19 @@ pipeline {
 
         stage('Quality Gate') {
             steps {
-                script {
-                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
-                }
+                waitForQualityGate abortPipeline: false
             }
         }
 
-        stage('Build Package') {
+        stage('Package') {
             steps {
                 sh 'mvn package'
             }
         }
 
-        stage('Publish To Nexus') {
+        stage('Publish Artifact to Nexus') {
             steps {
-                withMaven(
-                    globalMavenSettingsConfig: 'global-settings',
-                    jdk: 'jdk17',
-                    maven: 'maven3',
-                    traceability: true
-                ) {
+                withMaven(globalMavenSettingsConfig: 'global-settings') {
                     sh 'mvn deploy'
                 }
             }
@@ -81,87 +68,49 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                script {
-                    withDockerRegistry(credentialsId: 'docker-cred') {
-                        sh "docker build -t ${IMAGE_NAME} ."
-                    }
+                sh 'docker build -t fazil2664/boardshack:latest .'
+            }
+        }
+
+        stage('Image Scan') {
+            steps {
+                sh 'trivy image fazil2664/boardshack:latest'
+            }
+        }
+
+        stage('Push Image') {
+            steps {
+                withDockerRegistry(credentialsId: 'docker-cred') {
+                    sh 'docker push fazil2664/boardshack:latest'
                 }
             }
         }
 
-        stage('Docker Image Scan') {
+        stage('Deploy to Kubernetes') {
             steps {
-                sh "trivy image --format table -o trivy-image-report.html ${IMAGE_NAME}"
-            }
-        }
-
-        stage('Push Docker Image') {
-            steps {
-                script {
-                    withDockerRegistry(credentialsId: 'docker-cred') {
-                        sh "docker push ${IMAGE_NAME}"
-                    }
-                }
-            }
-        }
-
-        stage('Deploy To Kubernetes') {
-            steps {
-                withKubeConfig(
-                    credentialsId: 'k8-cred',
-                    serverUrl: 'https://192.168.0.100:6443',
-                    namespace: 'webapps'
-                ) {
-                    sh "kubectl apply -f deployment-service.yaml"
+                withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
+                    sh 'kubectl apply -f deployment-service.yaml'
                 }
             }
         }
 
         stage('Verify Deployment') {
             steps {
-                withKubeConfig(
-                    credentialsId: 'k8-cred',
-                    serverUrl: 'https://192.168.0.100:6443',
-                    namespace: 'webapps'
-                ) {
-                    sh "kubectl get pods"
-                    sh "kubectl get svc"
+                withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
+                    sh 'kubectl get pods'
+                    sh 'kubectl get svc'
                 }
             }
         }
     }
 
     post {
-        always {
-            script {
+        success {
+            echo "Pipeline executed successfully"
+        }
 
-                def jobName = env.JOB_NAME
-                def buildNumber = env.BUILD_NUMBER
-                def pipelineStatus = currentBuild.result ?: 'UNKNOWN'
-                def bannerColor = pipelineStatus == 'SUCCESS' ? 'green' : 'red'
-
-                def body = """
-                <html>
-                <body>
-                <div style="border:4px solid ${bannerColor}; padding:10px;">
-                <h2>${jobName} - Build ${buildNumber}</h2>
-                <div style="background-color:${bannerColor}; padding:10px;">
-                <h3 style="color:white;">Pipeline Status: ${pipelineStatus}</h3>
-                </div>
-                <p>Check the <a href="${BUILD_URL}">console output</a>.</p>
-                </div>
-                </body>
-                </html>
-                """
-
-                emailext(
-                    subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus}",
-                    body: body,
-                    to: 'rkf@gmail@gmail.com',
-                    mimeType: 'text/html',
-                    attachmentsPattern: 'trivy-image-report.html'
-                )
-            }
+        failure {
+            echo "Pipeline failed"
         }
     }
 }
