@@ -153,40 +153,22 @@ pipeline {
 
     post {
         always {
-            script {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    def jobName = env.JOB_NAME
-                    def buildNumber = env.BUILD_NUMBER
-                    def pipelineStatus = currentBuild.result ?: 'UNKNOWN'
-                    def bannerColor = pipelineStatus == 'SUCCESS' ? 'green' : 'red'
-
-                    def body = """
+            catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                emailext(
+                    subject: "${env.JOB_NAME} - Build ${env.BUILD_NUMBER} - ${currentBuild.result ?: 'UNKNOWN'}",
+                    body: """
                         <html>
                         <body>
-                        <div style="border: 4px solid ${bannerColor}; padding: 10px;">
-                        <h2>${jobName} - Build ${buildNumber}</h2>
-                        <div style="background-color: ${bannerColor}; padding: 10px;">
-                        <h3 style="color: white;">Pipeline Status: ${pipelineStatus}</h3>
-                        </div>
-                        <p>Check the <a href="${BUILD_URL}">console output</a>.</p>
-                        </div>
+                        <h2>${env.JOB_NAME} - Build ${env.BUILD_NUMBER}</h2>
+                        <p>Pipeline Status: ${currentBuild.result ?: 'UNKNOWN'}</p>
+                        <p>Check the <a href="${env.BUILD_URL}">console output</a>.</p>
                         </body>
                         </html>
-                    """
-
-                    // Optional email: works if Email Extension Plugin installed
-                    if (Jenkins.instance.pluginManager.getPlugin("email-ext")) {
-                        emailext (
-                            subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus}",
-                            body: body,
-                            to: 'rkf@gmail.com',
-                            mimeType: 'text/html',
-                            attachmentsPattern: 'trivy-image-report.html'
-                        )
-                    } else {
-                        echo "Email Extension plugin not installed. Skipping email."
-                    }
-                }
+                    """,
+                    to: 'rkf@gmail.com',
+                    mimeType: 'text/html',
+                    attachmentsPattern: 'trivy-image-report.html'
+                )
             }
         }
     }
