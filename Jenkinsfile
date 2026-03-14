@@ -1,152 +1,123 @@
 pipeline {
+    agent any
 
-agent {
-    kubernetes {
-        yaml """
-apiVersion: v1
-kind: Pod
-spec:
-  containers:
-
-  - name: maven
-    image: maven:3.9.9-eclipse-temurin-17
-    command:
-    - cat
-    tty: true
-
-  - name: docker
-    image: docker:25
-    command:
-    - cat
-    tty: true
-    volumeMounts:
-    - name: docker-sock
-      mountPath: /var/run/docker.sock
-
-  - name: trivy
-    image: aquasec/trivy
-    command:
-    - cat
-    tty: true
-
-  - name: kubectl
-    image: bitnami/kubectl
-    command:
-    - cat
-    tty: true
-
-  volumes:
-  - name: docker-sock
-    hostPath:
-      path: /var/run/docker.sock
-"""
+    tools {
+        jdk 'jdk17'
+        maven 'maven3'
     }
-}
 
-environment {
-    IMAGE_NAME = "fazil2664/boardshack"
-}
-
-stages {
-
-stage('Checkout Code') {
-    steps {
-        git branch: 'main',
-        credentialsId: 'git-cred',
-        url: 'https://github.com/fasil7170/Boardgame.git'
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner'
     }
-}
 
-stage('Build & Test') {
-    steps {
-        container('maven') {
-            sh 'mvn clean package'
+    stages {
+
+        stage('Git Checkout') {
+            steps {
+                git branch: 'main',
+                credentialsId: 'git-cred',
+                url: 'https://github.com/fasil7170/Boardgame.git'
+            }
         }
-    }
-}
 
-stage('Trivy File Scan') {
-    steps {
-        container('trivy') {
-            sh 'trivy fs .'
+        stage('Compile') {
+            steps {
+                sh "mvn compile"
+            }
         }
-    }
-}
 
-stage('SonarQube Analysis') {
-    steps {
-        container('maven') {
-            withSonarQubeEnv('sonar') {
-                sh '''
-                mvn sonar:sonar \
-                -Dsonar.projectKey=BoardGame \
-                -Dsonar.projectName=BoardGame
-                '''
+        stage('Test') {
+            steps {
+                sh "mvn test"
+            }
+        }
+
+        stage('File System Scan') {
+            steps {
+                sh "trivy fs --format table -o trivy-fs-report.html ."
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonar') {
+                    sh """
+                    ${SCANNER_HOME}/bin/sonar-scanner \
+                    -Dsonar.projectName=BoardGame \
+                    -Dsonar.projectKey=BoardGame \
+                    -Dsonar.java.binaries=.
+                    """
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                script {
+                    waitForQualityGate abortPipeline: false
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                sh "mvn package"
+            }
+        }
+
+        stage('Publish To Nexus') {
+            steps {
+                withMaven(globalMavenSettingsConfig: 'global-settings') {
+                    sh "mvn deploy"
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh "docker build -t fazil2664/boardshack:latest ."
+            }
+        }
+
+        stage('Docker Image Scan') {
+            steps {
+                sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                withDockerRegistry(credentialsId: 'docker-cred') {
+                    sh "docker push fazil2664/boardshack:latest"
+                }
+            }
+        }
+
+        stage('Deploy To Kubernetes') {
+            steps {
+                withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
+                    sh "kubectl apply -f deployment-service.yaml"
+                }
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
+                    sh "kubectl get pods"
+                    sh "kubectl get svc"
+                }
             }
         }
     }
-}
 
-stage('Quality Gate') {
-    steps {
-        waitForQualityGate abortPipeline: false
-    }
-}
-
-stage('Build Docker Image') {
-    steps {
-        container('docker') {
-            sh "docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} ."
+    post {
+        always {
+            emailext(
+                subject: "Jenkins Pipeline: ${currentBuild.currentResult}",
+                body: "Build URL: ${env.BUILD_URL}",
+                to: "rkf@gmail.com"
+            )
         }
     }
-}
-
-stage('Scan Docker Image') {
-    steps {
-        container('trivy') {
-            sh "trivy image ${IMAGE_NAME}:${BUILD_NUMBER}"
-        }
-    }
-}
-
-stage('Push Docker Image') {
-    steps {
-        container('docker') {
-            withDockerRegistry(url: 'https://index.docker.io/v1/', credentialsId: 'docker-cred') {
-                sh "docker push ${IMAGE_NAME}:${BUILD_NUMBER}"
-            }
-        }
-    }
-}
-
-stage('Deploy to Kubernetes') {
-    steps {
-        container('kubectl') {
-            withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
-                sh 'kubectl apply -f deployment-service.yaml'
-            }
-        }
-    }
-}
-
-stage('Verify Deployment') {
-    steps {
-        container('kubectl') {
-            sh 'kubectl get pods'
-            sh 'kubectl get svc'
-        }
-    }
-}
-
-}
-
-post {
-    success {
-        echo "Pipeline completed successfully"
-    }
-    failure {
-        echo "Pipeline failed"
-    }
-}
-
 }
