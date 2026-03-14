@@ -1,10 +1,38 @@
 pipeline {
-    agent any
+
+    agent {
+        kubernetes {
+            yaml """
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: jnlp
+    image: jenkins/inbound-agent:latest
+    tty: true
+
+  - name: kaniko
+    image: gcr.io/kaniko-project/executor:latest
+    command:
+    - cat
+    tty: true
+    volumeMounts:
+    - name: docker-config
+      mountPath: /kaniko/.docker
+
+  volumes:
+  - name: docker-config
+    secret:
+      secretName: dockerhub-secret
+"""
+        }
+    }
 
     environment {
         JAVA_HOME = "/usr/lib/jvm/java-17-openjdk-amd64"
         PATH = "${JAVA_HOME}/bin:${env.PATH}"
         SCANNER_HOME = tool 'sonar-scanner'
+        IMAGE_NAME = "fazil2664/boardshack:latest"
     }
 
     stages {
@@ -70,22 +98,16 @@ pipeline {
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build & Push Image (Kaniko)') {
             steps {
-                sh "docker build -t fazil2664/boardshack:latest ."
-            }
-        }
-
-        stage('Docker Image Scan') {
-            steps {
-                sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
-            }
-        }
-
-        stage('Push Docker Image') {
-            steps {
-                 withDockerRegistry(credentialsId: 'docker-cred', url: 'https://index.docker.io/v1/') {
-                    sh "docker push fazil2664/boardshack:latest"
+                container('kaniko') {
+                    sh """
+                    /kaniko/executor \
+                      --context `pwd` \
+                      --dockerfile Dockerfile \
+                      --destination $IMAGE_NAME \
+                      --skip-tls-verify
+                    """
                 }
             }
         }
@@ -114,29 +136,19 @@ pipeline {
                 def jobName = env.JOB_NAME
                 def buildNumber = env.BUILD_NUMBER
                 def pipelineStatus = currentBuild.result ?: 'SUCCESS'
-                def bannerColor = pipelineStatus == 'SUCCESS' ? 'green' : 'red'
 
                 def body = """
-                <html>
-                <body>
-                <div style="border: 4px solid ${bannerColor}; padding: 10px;">
-                <h2>${jobName} - Build ${buildNumber}</h2>
-                <div style="background-color:${bannerColor}; padding:10px;">
-                <h3 style="color:white;">Pipeline Status: ${pipelineStatus}</h3>
-                </div>
-                <p>Check the <a href="${env.BUILD_URL}">console output</a>.</p>
-                </div>
-                </body>
-                </html>
+                Job: ${jobName}
+                Build: ${buildNumber}
+                Status: ${pipelineStatus}
+                URL: ${env.BUILD_URL}
                 """
 
                 try {
                     emailext(
                         subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus}",
                         body: body,
-                        to: "rkf@gmail.com",
-                        mimeType: "text/html",
-                        attachmentsPattern: "trivy-image-report.html"
+                        to: "rkf@gmail.com"
                     )
                 } catch (Exception e) {
                     echo "Email notification failed: ${e}"
