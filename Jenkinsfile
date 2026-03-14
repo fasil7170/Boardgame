@@ -53,9 +53,7 @@ pipeline {
 
         stage('Quality Gate') {
             steps {
-                script {
-                    waitForQualityGate abortPipeline: false
-                }
+                waitForQualityGate abortPipeline: false
             }
         }
 
@@ -87,7 +85,7 @@ pipeline {
 
         stage('Push Docker Image') {
             steps {
-                withDockerRegistry(credentialsId: 'docker-cred') {
+                withDockerRegistry(credentialsId: 'docker-cred', url: 'https://index.docker.io/v1/') {
                     sh "docker push fazil2664/boardshack:latest"
                 }
             }
@@ -104,8 +102,8 @@ pipeline {
         stage('Verify Deployment') {
             steps {
                 withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
-                    sh "kubectl get pods"
-                    sh "kubectl get svc"
+                    sh "kubectl get pods -n webapps"
+                    sh "kubectl get svc -n webapps"
                 }
             }
         }
@@ -114,9 +112,10 @@ pipeline {
     post {
         always {
             emailext(
-                subject: "Jenkins Pipeline: ${currentBuild.currentResult}",
+                subject: "Build ${BUILD_NUMBER} - ${currentBuild.currentResult}",
                 body: "Build URL: ${env.BUILD_URL}",
-                to: "rkf@gmail.com"
+                to: "rkf@gmail.com",
+                attachmentsPattern: "*.html"
             )
         }
     }
