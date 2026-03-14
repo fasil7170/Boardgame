@@ -1,68 +1,40 @@
 pipeline {
+    agent any
 
-    agent {
-        kubernetes {
-            yaml """
-apiVersion: v1
-kind: Pod
-metadata:
-  labels:
-    app: jenkins-kaniko-agent
-spec:
-  containers:
-  - name: jnlp
-    image: jenkins/inbound-agent:latest
-    tty: true
-
-  - name: kaniko
-    image: gcr.io/kaniko-project/executor:debug
-    command:
-    - /busybox/cat
-    tty: true
-    volumeMounts:
-      - name: docker-config
-        mountPath: /kaniko/.docker
-
-  volumes:
-    - name: docker-config
-      secret:
-        secretName: dockerhub-secret
-"""
-        }
+    tools {
+        jdk 'jdk17'
+        maven 'maven3'
     }
 
     environment {
-        JAVA_HOME = "/usr/lib/jvm/java-17-openjdk-amd64"
-        PATH = "${JAVA_HOME}/bin:${env.PATH}"
         SCANNER_HOME = tool 'sonar-scanner'
-        IMAGE_NAME = "fazil2664/boardshack:latest"
     }
 
     stages {
 
-        stage('Checkout Code') {
+        stage('Git Checkout') {
             steps {
                 git branch: 'main',
-                    credentialsId: 'git-cred',
-                    url: 'https://github.com/fasil7170/Boardgame.git'
+                credentialsId: 'git-cred',
+                url: 'https://github.com/fasil7170/Boardgame.git'
             }
         }
 
         stage('Compile') {
             steps {
-                sh "mvn clean compile"
+                sh "mvn compile"
             }
         }
 
-        stage('Run Tests') {
+        stage('Test') {
             steps {
                 sh "mvn test"
             }
         }
 
-        stage('Filesystem Scan') {
+        stage('File System Scan') {
             steps {
-                sh "trivy fs --format table -o trivy-fs-report.html ."
+                sh "trivy fs --format html -o trivy-fs-report.html ."
             }
         }
 
@@ -70,10 +42,10 @@ spec:
             steps {
                 withSonarQubeEnv('sonar') {
                     sh """
-                    ${SCANNER_HOME}/bin/sonar-scanner \
-                      -Dsonar.projectKey=BoardGame \
-                      -Dsonar.projectName=BoardGame \
-                      -Dsonar.java.binaries=.
+                    $SCANNER_HOME/bin/sonar-scanner \
+                    -Dsonar.projectName=BoardGame \
+                    -Dsonar.projectKey=BoardGame \
+                    -Dsonar.java.binaries=.
                     """
                 }
             }
@@ -82,48 +54,62 @@ spec:
         stage('Quality Gate') {
             steps {
                 script {
-                    waitForQualityGate abortPipeline: false
+                    waitForQualityGate abortPipeline: false,
+                    credentialsId: 'sonar-token'
                 }
             }
         }
 
-        stage('Build Artifact') {
+        stage('Build') {
             steps {
-                sh "mvn package -DskipTests"
+                sh "mvn package"
             }
         }
 
-        stage('Publish to Nexus') {
+        stage('Publish To Nexus') {
             steps {
-                withMaven(globalMavenSettingsConfig: 'global-settings') {
+                withMaven(globalMavenSettingsConfig: 'global-settings',
+                          jdk: 'jdk17',
+                          maven: 'maven3',
+                          traceability: true) {
                     sh "mvn deploy"
                 }
             }
         }
 
-        stage('Build & Push Image (Kaniko)') {
+        stage('Build Docker Image') {
             steps {
-                container('kaniko') {
-                    sh """
-                    /kaniko/executor \
-                      --context `pwd` \
-                      --dockerfile Dockerfile \
-                      --destination ${IMAGE_NAME} \
-                      --skip-tls-verify
-                    """
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                        sh "docker build -t fazil2664/boardshack:latest ."
+                    }
                 }
             }
         }
 
-        stage('Image Scan') {
+        stage('Docker Image Scan') {
             steps {
-                sh "trivy image --format table -o trivy-image-report.html ${IMAGE_NAME}"
+                sh "trivy image --format html -o trivy-image-report.html fazil2664/boardshack:latest"
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        stage('Push Docker Image') {
             steps {
-                withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                        sh "docker push fazil2664/boardshack:latest"
+                    }
+                }
+            }
+        }
+
+        stage('Deploy To Kubernetes') {
+            steps {
+                withKubeConfig(
+                    credentialsId: 'k8-cred',
+                    namespace: 'webapps',
+                    serverUrl: 'https://192.168.0.100:6443'
+                ) {
                     sh "kubectl apply -f deployment-service.yaml"
                 }
             }
@@ -131,7 +117,11 @@ spec:
 
         stage('Verify Deployment') {
             steps {
-                withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
+                withKubeConfig(
+                    credentialsId: 'k8-cred',
+                    namespace: 'webapps',
+                    serverUrl: 'https://192.168.0.100:6443'
+                ) {
                     sh "kubectl get pods"
                     sh "kubectl get svc"
                 }
@@ -145,7 +135,7 @@ spec:
 
                 def jobName = env.JOB_NAME
                 def buildNumber = env.BUILD_NUMBER
-                def pipelineStatus = currentBuild.result ?: 'SUCCESS'
+                def pipelineStatus = currentBuild.result ?: 'UNKNOWN'
                 def bannerColor = pipelineStatus == 'SUCCESS' ? 'green' : 'red'
 
                 def body = """
@@ -153,26 +143,22 @@ spec:
                 <body>
                 <div style="border: 4px solid ${bannerColor}; padding: 10px;">
                 <h2>${jobName} - Build ${buildNumber}</h2>
-                <div style="background-color:${bannerColor}; padding:10px;">
-                <h3 style="color:white;">Pipeline Status: ${pipelineStatus}</h3>
+                <div style="background-color: ${bannerColor}; padding: 10px;">
+                <h3 style="color: white;">Pipeline Status: ${pipelineStatus}</h3>
                 </div>
-                <p>Check the <a href="${env.BUILD_URL}">console output</a>.</p>
+                <p>Check the <a href="${BUILD_URL}">console output</a>.</p>
                 </div>
                 </body>
                 </html>
                 """
 
-                try {
-                    emailext(
-                        subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus}",
-                        body: body,
-                        to: "rkf@gmail.com",
-                        mimeType: "text/html",
-                        attachmentsPattern: "trivy-image-report.html"
-                    )
-                } catch (Exception e) {
-                    echo "Email notification failed: ${e}"
-                }
+                emailext (
+                    subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus}",
+                    body: body,
+                    to: 'rkf@gmail.com',
+                    mimeType: 'text/html',
+                    attachmentsPattern: 'trivy-image-report.html'
+                )
             }
         }
     }
