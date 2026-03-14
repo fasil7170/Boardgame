@@ -1,4 +1,5 @@
 pipeline {
+
     agent any
 
     environment {
@@ -15,15 +16,9 @@ pipeline {
             }
         }
 
-        stage('Build') {
+        stage('Build & Test') {
             steps {
-                sh 'mvn clean compile'
-            }
-        }
-
-        stage('Test') {
-            steps {
-                sh 'mvn test'
+                sh 'mvn -B clean package'
             }
         }
 
@@ -38,8 +33,8 @@ pipeline {
                 withSonarQubeEnv('sonar') {
                     sh """
                     sonar-scanner \
-                    -Dsonar.projectName=BoardGame \
                     -Dsonar.projectKey=BoardGame \
+                    -Dsonar.projectName=BoardGame \
                     -Dsonar.java.binaries=.
                     """
                 }
@@ -49,12 +44,6 @@ pipeline {
         stage('Quality Gate') {
             steps {
                 waitForQualityGate abortPipeline: false
-            }
-        }
-
-        stage('Package') {
-            steps {
-                sh 'mvn package'
             }
         }
 
@@ -68,20 +57,20 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh 'docker build -t fazil2664/boardshack:latest .'
+                sh "docker build -t ${IMAGE_NAME} ."
             }
         }
 
-        stage('Image Scan') {
+        stage('Docker Image Scan') {
             steps {
-                sh 'trivy image fazil2664/boardshack:latest'
+                sh "trivy image ${IMAGE_NAME}"
             }
         }
 
-        stage('Push Image') {
+        stage('Push Docker Image') {
             steps {
-                withDockerRegistry(credentialsId: 'docker-cred') {
-                    sh 'docker push fazil2664/boardshack:latest'
+                withDockerRegistry(url: 'https://index.docker.io/v1/', credentialsId: 'docker-cred') {
+                    sh "docker push ${IMAGE_NAME}"
                 }
             }
         }
@@ -108,7 +97,6 @@ pipeline {
         success {
             echo "Pipeline executed successfully"
         }
-
         failure {
             echo "Pipeline failed"
         }
