@@ -2,8 +2,8 @@ pipeline {
     agent any
 
     tools {
-        jdk 'jdk17'        // Use manually installed JDK
-        maven 'maven3'     // Use manually installed Maven
+        jdk 'jdk17'        // Must be manually installed
+        maven 'maven3'     // Must be manually installed
     }
 
     environment {
@@ -127,7 +127,7 @@ pipeline {
                     withKubeConfig(
                         credentialsId: 'k8-cred',
                         namespace: 'webapps',
-                        serverUrl: 'https://127.0.0.1:6443' // Local cluster
+                        serverUrl: 'https://127.0.0.1:6443'
                     ) {
                         sh "kubectl apply -f deployment-service.yaml"
                         sh "kubectl rollout status deployment/boardgame"
@@ -142,7 +142,7 @@ pipeline {
                     withKubeConfig(
                         credentialsId: 'k8-cred',
                         namespace: 'webapps',
-                        serverUrl: 'https://127.0.0.1:6443'
+                        serverUrl: 'https://192.168.0.100:6443'
                     ) {
                         sh "kubectl get all -n webapps"
                     }
@@ -153,22 +153,29 @@ pipeline {
 
     post {
         always {
+            // Sandbox-safe email step
             catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                emailext(
-                    subject: "${env.JOB_NAME} - Build ${env.BUILD_NUMBER} - ${currentBuild.result ?: 'UNKNOWN'}",
-                    body: """
-                        <html>
-                        <body>
-                        <h2>${env.JOB_NAME} - Build ${env.BUILD_NUMBER}</h2>
-                        <p>Pipeline Status: ${currentBuild.result ?: 'UNKNOWN'}</p>
-                        <p>Check the <a href="${env.BUILD_URL}">console output</a>.</p>
-                        </body>
-                        </html>
-                    """,
-                    to: 'rkf@gmail.com',
-                    mimeType: 'text/html',
-                    attachmentsPattern: 'trivy-image-report.html'
-                )
+                script {
+                    try {
+                        emailext(
+                            subject: "${env.JOB_NAME} - Build ${env.BUILD_NUMBER} - ${currentBuild.result ?: 'UNKNOWN'}",
+                            body: """
+                                <html>
+                                    <body>
+                                        <h2>${env.JOB_NAME} - Build ${env.BUILD_NUMBER}</h2>
+                                        <p>Pipeline Status: ${currentBuild.result ?: 'UNKNOWN'}</p>
+                                        <p>Check the <a href="${env.BUILD_URL}">console output</a>.</p>
+                                    </body>
+                                </html>
+                            """,
+                            to: 'rkf@gmail.com',
+                            mimeType: 'text/html',
+                            attachmentsPattern: 'trivy-image-report.html'
+                        )
+                    } catch (err) {
+                        echo "Email step skipped (plugin missing or sandbox restriction): ${err}"
+                    }
+                }
             }
         }
     }
