@@ -5,6 +5,9 @@ pipeline {
             yaml """
 apiVersion: v1
 kind: Pod
+metadata:
+  labels:
+    app: jenkins-kaniko-agent
 spec:
   containers:
   - name: jnlp
@@ -12,18 +15,18 @@ spec:
     tty: true
 
   - name: kaniko
-    image: gcr.io/kaniko-project/executor:latest
+    image: gcr.io/kaniko-project/executor:debug
     command:
-    - cat
+    - /busybox/cat
     tty: true
     volumeMounts:
-    - name: docker-config
-      mountPath: /kaniko/.docker
+      - name: docker-config
+        mountPath: /kaniko/.docker
 
   volumes:
-  - name: docker-config
-    secret:
-      secretName: dockerhub-secret
+    - name: docker-config
+      secret:
+        secretName: dockerhub-secret
 """
         }
     }
@@ -37,11 +40,11 @@ spec:
 
     stages {
 
-        stage('Git Checkout') {
+        stage('Checkout Code') {
             steps {
                 git branch: 'main',
-                credentialsId: 'git-cred',
-                url: 'https://github.com/fasil7170/Boardgame.git'
+                    credentialsId: 'git-cred',
+                    url: 'https://github.com/fasil7170/Boardgame.git'
             }
         }
 
@@ -51,13 +54,13 @@ spec:
             }
         }
 
-        stage('Test') {
+        stage('Run Tests') {
             steps {
                 sh "mvn test"
             }
         }
 
-        stage('File System Scan') {
+        stage('Filesystem Scan') {
             steps {
                 sh "trivy fs --format table -o trivy-fs-report.html ."
             }
@@ -68,9 +71,9 @@ spec:
                 withSonarQubeEnv('sonar') {
                     sh """
                     ${SCANNER_HOME}/bin/sonar-scanner \
-                    -Dsonar.projectName=BoardGame \
-                    -Dsonar.projectKey=BoardGame \
-                    -Dsonar.java.binaries=.
+                      -Dsonar.projectKey=BoardGame \
+                      -Dsonar.projectName=BoardGame \
+                      -Dsonar.java.binaries=.
                     """
                 }
             }
@@ -90,7 +93,7 @@ spec:
             }
         }
 
-        stage('Publish To Nexus') {
+        stage('Publish to Nexus') {
             steps {
                 withMaven(globalMavenSettingsConfig: 'global-settings') {
                     sh "mvn deploy"
@@ -105,14 +108,20 @@ spec:
                     /kaniko/executor \
                       --context `pwd` \
                       --dockerfile Dockerfile \
-                      --destination $IMAGE_NAME \
+                      --destination ${IMAGE_NAME} \
                       --skip-tls-verify
                     """
                 }
             }
         }
 
-        stage('Deploy To Kubernetes') {
+        stage('Image Scan') {
+            steps {
+                sh "trivy image --format table -o trivy-image-report.html ${IMAGE_NAME}"
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
             steps {
                 withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
                     sh "kubectl apply -f deployment-service.yaml"
@@ -133,22 +142,33 @@ spec:
     post {
         always {
             script {
+
                 def jobName = env.JOB_NAME
                 def buildNumber = env.BUILD_NUMBER
                 def pipelineStatus = currentBuild.result ?: 'SUCCESS'
+                def bannerColor = pipelineStatus == 'SUCCESS' ? 'green' : 'red'
 
                 def body = """
-                Job: ${jobName}
-                Build: ${buildNumber}
-                Status: ${pipelineStatus}
-                URL: ${env.BUILD_URL}
+                <html>
+                <body>
+                <div style="border: 4px solid ${bannerColor}; padding: 10px;">
+                <h2>${jobName} - Build ${buildNumber}</h2>
+                <div style="background-color:${bannerColor}; padding:10px;">
+                <h3 style="color:white;">Pipeline Status: ${pipelineStatus}</h3>
+                </div>
+                <p>Check the <a href="${env.BUILD_URL}">console output</a>.</p>
+                </div>
+                </body>
+                </html>
                 """
 
                 try {
                     emailext(
                         subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus}",
                         body: body,
-                        to: "rkf@gmail.com"
+                        to: "rkf@gmail.com",
+                        mimeType: "text/html",
+                        attachmentsPattern: "trivy-image-report.html"
                     )
                 } catch (Exception e) {
                     echo "Email notification failed: ${e}"
