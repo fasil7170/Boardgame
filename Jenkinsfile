@@ -114,7 +114,7 @@ pipeline {
 
     post {
         success {
-            mail to: 'rkf@gmail.com',
+            mail to: 'rkftip@gmail.com',
                  subject: "SUCCESS: Build ${BUILD_NUMBER}",
                  body: "Build succeeded. Check details at ${BUILD_URL}"
         }
