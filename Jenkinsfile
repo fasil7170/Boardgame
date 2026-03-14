@@ -8,6 +8,8 @@ pipeline {
 
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
+        IMAGE_NAME = "fazil2664/boardshack"
+        IMAGE_TAG = "${BUILD_NUMBER}"
     }
 
     stages {
@@ -22,19 +24,19 @@ pipeline {
 
         stage('Compile') {
             steps {
-                sh "mvn compile"
+                sh 'mvn clean compile'
             }
         }
 
         stage('Test') {
             steps {
-                sh "mvn test"
+                sh 'mvn test'
             }
         }
 
-        stage('File System Scan') {
+        stage('Trivy File System Scan') {
             steps {
-                sh "trivy fs --format table -o trivy-fs-report.html ."
+                sh 'trivy fs --format table -o trivy-fs-report.html .'
             }
         }
 
@@ -57,36 +59,36 @@ pipeline {
             }
         }
 
-        stage('Build') {
+        stage('Build Artifact') {
             steps {
-                sh "mvn package"
+                sh 'mvn package'
             }
         }
 
         stage('Publish To Nexus') {
             steps {
                 withMaven(globalMavenSettingsConfig: 'global-settings') {
-                    sh "mvn deploy"
+                    sh 'mvn deploy'
                 }
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh "docker build -t fazil2664/boardshack:latest ."
+                sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
             }
         }
 
         stage('Docker Image Scan') {
             steps {
-                sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
+                sh "trivy image --format table -o trivy-image-report.html ${IMAGE_NAME}:${IMAGE_TAG}"
             }
         }
 
         stage('Push Docker Image') {
             steps {
                 withDockerRegistry(credentialsId: 'docker-cred', url: 'https://index.docker.io/v1/') {
-                    sh "docker push fazil2664/boardshack:latest"
+                    sh "docker push ${IMAGE_NAME}:${IMAGE_TAG}"
                 }
             }
         }
@@ -94,7 +96,7 @@ pipeline {
         stage('Deploy To Kubernetes') {
             steps {
                 withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
-                    sh "kubectl apply -f deployment-service.yaml"
+                    sh "kubectl set image deployment/boardgame boardgame=${IMAGE_NAME}:${IMAGE_TAG}"
                 }
             }
         }
@@ -102,21 +104,25 @@ pipeline {
         stage('Verify Deployment') {
             steps {
                 withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
-                    sh "kubectl get pods -n webapps"
-                    sh "kubectl get svc -n webapps"
+                    sh 'kubectl get pods'
+                    sh 'kubectl get svc'
                 }
             }
         }
+
     }
 
     post {
-        always {
-            emailext(
-                subject: "Build ${BUILD_NUMBER} - ${currentBuild.currentResult}",
-                body: "Build URL: ${env.BUILD_URL}",
-                to: "rkf@gmail.com",
-                attachmentsPattern: "*.html"
-            )
+        success {
+            mail to: 'rkf@gmail.com',
+                 subject: "SUCCESS: Build ${BUILD_NUMBER}",
+                 body: "Build succeeded. Check details at ${BUILD_URL}"
+        }
+
+        failure {
+            mail to: 'rkf@gmail.com',
+                 subject: "FAILED: Build ${BUILD_NUMBER}",
+                 body: "Build failed. Check details at ${BUILD_URL}"
         }
     }
 }
