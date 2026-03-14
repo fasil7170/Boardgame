@@ -2,30 +2,26 @@ pipeline {
     agent any
 
     tools {
-        jdk 'jdk17'        // Must be manually installed
-        maven 'maven3'     // Must be manually installed
+        // Use manually installed JDK and Maven
+        jdk 'jdk17'
+        maven 'maven3'
     }
 
     environment {
-        SCANNER_HOME = tool 'sonar-scanner'
+        SCANNER_HOME = '/home/jenkins/agent/tools/sonar-scanner' // adjust if needed
     }
 
     stages {
-
         stage('Git Checkout') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    git branch: 'main',
-                        credentialsId: 'git-cred',
-                        url: 'https://github.com/fasil7170/Boardgame.git'
-                }
+                git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/fasil7170/Boardgame.git'
             }
         }
 
         stage('Compile') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh "mvn compile"
+                    sh 'mvn compile'
                 }
             }
         }
@@ -33,7 +29,7 @@ pipeline {
         stage('Test') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh "mvn test"
+                    sh 'mvn test'
                 }
             }
         }
@@ -41,7 +37,7 @@ pipeline {
         stage('File System Scan') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh "trivy fs --format html -o trivy-fs-report.html ."
+                    sh 'trivy fs --format table -o trivy-fs-report.html .'
                 }
             }
         }
@@ -50,12 +46,7 @@ pipeline {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     withSonarQubeEnv('sonar') {
-                        sh """
-                        $SCANNER_HOME/bin/sonar-scanner \
-                        -Dsonar.projectName=BoardGame \
-                        -Dsonar.projectKey=BoardGame \
-                        -Dsonar.java.binaries=.
-                        """
+                        sh "$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=BoardGame -Dsonar.projectKey=BoardGame -Dsonar.java.binaries=."
                     }
                 }
             }
@@ -74,7 +65,7 @@ pipeline {
         stage('Build') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh "mvn package"
+                    sh 'mvn package'
                 }
             }
         }
@@ -82,19 +73,19 @@ pipeline {
         stage('Publish To Nexus') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    withMaven(globalMavenSettingsConfig: 'global-settings', jdk: 'jdk17', maven: 'maven3', traceability: true) {
-                        sh "mvn deploy"
+                    withMaven(globalMavenSettingsConfig: 'global-settings', jdk: 'jdk17', maven: 'maven3') {
+                        sh 'mvn deploy'
                     }
                 }
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build & Tag Docker Image') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     script {
-                        withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
-                            sh "docker build -t fazil2664/boardshack:latest ."
+                        withDockerRegistry(credentialsId: 'docker-cred', url: '', toolName: 'docker') {
+                            sh 'docker build -t fazil2664/boardshack:latest .'
                         }
                     }
                 }
@@ -104,7 +95,7 @@ pipeline {
         stage('Docker Image Scan') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh "trivy image --format html -o trivy-image-report.html fazil2664/boardshack:latest"
+                    sh 'trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest'
                 }
             }
         }
@@ -114,7 +105,7 @@ pipeline {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     script {
                         withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
-                            sh "docker push fazil2664/boardshack:latest"
+                            sh 'docker push fazil2664/boardshack:latest'
                         }
                     }
                 }
@@ -124,13 +115,8 @@ pipeline {
         stage('Deploy To Kubernetes') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    withKubeConfig(
-                        credentialsId: 'k8-cred',
-                        namespace: 'webapps',
-                        serverUrl: 'https://127.0.0.1:6443'
-                    ) {
-                        sh "kubectl apply -f deployment-service.yaml"
-                        sh "kubectl rollout status deployment/boardgame"
+                    withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps', serverUrl: 'https://192.168.0.100:6443') {
+                        sh 'kubectl apply -f deployment-service.yaml'
                     }
                 }
             }
@@ -139,12 +125,9 @@ pipeline {
         stage('Verify Deployment') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    withKubeConfig(
-                        credentialsId: 'k8-cred',
-                        namespace: 'webapps',
-                        serverUrl: 'https://192.168.0.100:6443'
-                    ) {
-                        sh "kubectl get all -n webapps"
+                    withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps', serverUrl: 'https://192.168.0.100:6443') {
+                        sh 'kubectl get pods -n webapps'
+                        sh 'kubectl get svc -n webapps'
                     }
                 }
             }
@@ -153,29 +136,13 @@ pipeline {
 
     post {
         always {
-            // Sandbox-safe email step
-            catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                script {
-                    try {
-                        emailext(
-                            subject: "${env.JOB_NAME} - Build ${env.BUILD_NUMBER} - ${currentBuild.result ?: 'UNKNOWN'}",
-                            body: """
-                                <html>
-                                    <body>
-                                        <h2>${env.JOB_NAME} - Build ${env.BUILD_NUMBER}</h2>
-                                        <p>Pipeline Status: ${currentBuild.result ?: 'UNKNOWN'}</p>
-                                        <p>Check the <a href="${env.BUILD_URL}">console output</a>.</p>
-                                    </body>
-                                </html>
-                            """,
-                            to: 'rkf@gmail.com',
-                            mimeType: 'text/html',
-                            attachmentsPattern: 'trivy-image-report.html'
-                        )
-                    } catch (err) {
-                        echo "Email step skipped (plugin missing or sandbox restriction): ${err}"
-                    }
-                }
+            script {
+                // Simplified email using sandbox-safe 'mail' step
+                def status = currentBuild.currentResult
+                mail to: 'rkf@gmail.com',
+                     from: 'jenkins@example.com',
+                     subject: "${env.JOB_NAME} - Build ${env.BUILD_NUMBER} - ${status}",
+                     body: "Pipeline finished with status: ${status}\nCheck console output at ${env.BUILD_URL}"
             }
         }
     }
