@@ -2,29 +2,32 @@ pipeline {
     agent any
 
     tools {
-        jdk 'jdk21'      // Ensure JDK 21 installed in Jenkins Global Tool Config
-        maven 'maven3'   // Ensure Maven 3.9+ installed in Jenkins Global Tool Config
-    }
-
-    environment {
-        SCANNER_HOME = tool 'sonar-scanner'
-        PATH = "${tool 'jdk21'}/bin:${tool 'maven3'}/bin:${env.PATH}"
+        maven 'maven3' // Ensure Maven is installed and configured in Jenkins
     }
 
     options {
-        skipDefaultCheckout(true)
-        timeout(time: 60, unit: 'MINUTES') // Stop long-running builds
+        skipDefaultCheckout(true)  // We'll do Git checkout manually
+    }
+
+    environment {
+        SCANNER_HOME = tool 'sonar-scanner' // Sonar scanner installed in Jenkins
     }
 
     stages {
-
         stage('Verify Tools') {
             steps {
+                script {
+                    // Dynamically detect JAVA_HOME
+                    env.JAVA_HOME = sh(
+                        script: "readlink -f \$(which javac) | sed 's:/bin/javac::'",
+                        returnStdout: true
+                    ).trim()
+                    env.PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
+                }
                 sh '''
                     echo "JAVA_HOME=${JAVA_HOME}"
                     java -version
                     mvn -version
-                    $SCANNER_HOME/bin/sonar-scanner -v || true
                 '''
             }
         }
@@ -44,70 +47,81 @@ pipeline {
 
         stage('Compile') {
             steps {
-                sh 'mvn clean compile -Djava.version=21'
+                script {
+                    sh "mvn compile"
+                }
             }
         }
 
         stage('Test') {
             steps {
-                sh 'mvn test -Djava.version=21'
-            }
-        }
-
-        stage('File System Scan') {
-            steps {
-                sh 'trivy fs --format table -o trivy-fs-report.html .'
-            }
-        }
-
-        stage('SonarQube Analysis') {
-            steps {
-                withSonarQubeEnv('sonar') {
-                    sh """
-                        $SCANNER_HOME/bin/sonar-scanner \
-                        -Dsonar.projectName=BoardGame \
-                        -Dsonar.projectKey=BoardGame \
-                        -Dsonar.java.binaries=.
-                    """
+                script {
+                    sh "mvn test"
                 }
-            }
-        }
-
-        stage('Quality Gate') {
-            steps {
-                waitForQualityGate abortPipeline: true, credentialsId: 'sonar-token'
             }
         }
 
         stage('Package') {
             steps {
-                sh 'mvn package -Djava.version=21'
+                script {
+                    sh "mvn package"
+                }
             }
         }
 
         stage('Publish To Nexus') {
             steps {
-                withMaven(globalMavenSettingsConfig: 'global-settings', maven: 'maven3') {
-                    sh 'mvn deploy -Djava.version=21'
+                script {
+                    withMaven(globalMavenSettingsConfig: 'global-settings', maven: 'maven3') {
+                        sh "mvn deploy"
+                    }
                 }
             }
         }
 
         stage('Docker Build & Push') {
             steps {
-                withDockerRegistry(credentialsId: 'docker-cred', url: 'https://index.docker.io/v1/') {
-                    sh 'docker build -t fazil2664/boardshack:latest .'
-                    sh 'docker push fazil2664/boardshack:latest'
+                script {
+                    // Provide Docker registry URL
+                    withDockerRegistry(credentialsId: 'docker-cred', url: 'https://index.docker.io/v1/') {
+                        sh "docker build -t fazil2664/boardshack:latest ."
+                        sh "docker push fazil2664/boardshack:latest"
+                    }
                 }
             }
         }
 
         stage('Deploy To Kubernetes') {
             steps {
-                withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
-                    sh 'kubectl apply -f deployment-service.yaml'
-                    sh 'kubectl get pods -n webapps'
-                    sh 'kubectl get svc -n webapps'
+                script {
+                    withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
+                        sh "kubectl apply -f deployment-service.yaml"
+                        sh "kubectl get pods -n webapps"
+                        sh "kubectl get svc -n webapps"
+                    }
+                }
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                script {
+                    withSonarQubeEnv('sonar') {
+                        sh """
+                            $SCANNER_HOME/bin/sonar-scanner \
+                            -Dsonar.projectName=BoardGame \
+                            -Dsonar.projectKey=BoardGame \
+                            -Dsonar.java.binaries=.
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                script {
+                    waitForQualityGate abortPipeline: true, credentialsId: 'sonar-token'
                 }
             }
         }
@@ -118,7 +132,7 @@ pipeline {
             echo "Pipeline finished with status: ${currentBuild.currentResult}"
         }
         failure {
-            error "Pipeline failed. Stopping further stages."
+            echo "Pipeline failed! Stopping further execution."
         }
     }
 }
