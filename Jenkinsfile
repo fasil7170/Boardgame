@@ -1,14 +1,11 @@
 pipeline {
     agent any
 
-    tools {
-        maven 'maven3'  // Use the Maven installation configured in Jenkins
-    }
-
     environment {
-        JAVA_HOME = '/usr/lib/jvm/java-17-openjdk'   // Ensure this path exists on your agent
+        // Set the correct JDK path for Maven
+        JAVA_HOME = '/usr/lib/jvm/java-21-temurin'  // <-- Adjust this path to your agent
         PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
-        SCANNER_HOME = '/home/jenkins/agent/tools/sonar-scanner'  // Adjust if needed
+        SCANNER_HOME = '/home/jenkins/agent/tools/sonar-scanner' // Adjust if needed
     }
 
     stages {
