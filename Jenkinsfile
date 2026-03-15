@@ -2,18 +2,18 @@ pipeline {
     agent any
 
     tools {
-        jdk 'jdk17'        // Enforce JDK 17
-        maven 'maven3'
+        jdk 'jdk17'       // Pre-installed on agent
+        maven 'maven3'    // Pre-installed on agent
     }
 
     environment {
-        SCANNER_HOME = tool 'sonar-scanner'
-        JAVA_HOME = tool 'jdk17'      // Explicitly set JAVA_HOME to the JDK tool
+        JAVA_HOME = tool 'jdk17'
         PATH = "${tool 'jdk17'}/bin:${tool 'maven3'}/bin:${env.PATH}"
+        SCANNER_HOME = tool 'sonar-scanner'  // Pre-installed on agent
     }
 
     stages {
-        stage('Git Checkout') {
+        stage('Checkout') {
             steps {
                 git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/fasil7170/Boardgame.git'
             }
@@ -25,13 +25,14 @@ pipeline {
                     echo "JAVA_HOME=$JAVA_HOME"
                     java -version
                     mvn -version
+                    $SCANNER_HOME/bin/sonar-scanner -v || echo "Sonar Scanner version check"
                 '''
             }
         }
 
         stage('Compile') {
             steps {
-                sh "mvn compile"
+                sh "mvn clean compile"
             }
         }
 
@@ -50,8 +51,12 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('sonar') {
-                    sh '''$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=BoardGame -Dsonar.projectKey=BoardGame \
-                        -Dsonar.java.binaries=.'''
+                    sh """
+                        $SCANNER_HOME/bin/sonar-scanner \
+                        -Dsonar.projectName=BoardGame \
+                        -Dsonar.projectKey=BoardGame \
+                        -Dsonar.java.binaries=.
+                    """
                 }
             }
         }
@@ -70,9 +75,9 @@ pipeline {
             }
         }
 
-        stage('Publish To Nexus') {
+        stage('Publish to Nexus') {
             steps {
-                withMaven(globalMavenSettingsConfig: 'global-settings', jdk: 'jdk17', maven: 'maven3', traceability: true) {
+                withMaven(globalMavenSettingsConfig: 'global-settings', jdk: 'jdk17', maven: 'maven3') {
                     sh "mvn deploy"
                 }
             }
@@ -104,9 +109,13 @@ pipeline {
             }
         }
 
-        stage('Deploy To Kubernetes') {
+        stage('Deploy to Kubernetes') {
             steps {
-                withKubeConfig(caCertificate: '', clusterName: 'kubernetes', contextName: '', credentialsId: 'k8-cred', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://192.168.0.100:6443') {
+                withKubeConfig(
+                    credentialsId: 'k8-cred', 
+                    namespace: 'webapps', 
+                    serverUrl: 'https://192.168.0.100:6443'
+                ) {
                     sh "kubectl apply -f deployment-service.yaml"
                 }
             }
@@ -114,7 +123,11 @@ pipeline {
 
         stage('Verify Deployment') {
             steps {
-                withKubeConfig(caCertificate: '', clusterName: 'kubernetes', contextName: '', credentialsId: 'k8-cred', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://192.168.0.100:6443') {
+                withKubeConfig(
+                    credentialsId: 'k8-cred', 
+                    namespace: 'webapps', 
+                    serverUrl: 'https://192.168.0.100:6443'
+                ) {
                     sh "kubectl get pods -n webapps"
                     sh "kubectl get svc -n webapps"
                 }
