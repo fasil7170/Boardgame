@@ -1,75 +1,52 @@
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
-                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+<dependencies>
+    <!-- Lombok for @Data, @AllArgsConstructor, etc. -->
+    <dependency>
+        <groupId>org.projectlombok</groupId>
+        <artifactId>lombok</artifactId>
+        <version>1.18.30</version>
+        <scope>provided</scope>
+    </dependency>
 
-    <modelVersion>4.0.0</modelVersion>
+    <!-- Spring Core & Beans -->
+    <dependency>
+        <groupId>org.springframework</groupId>
+        <artifactId>spring-context</artifactId>
+        <version>6.1.13</version>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework</groupId>
+        <artifactId>spring-beans</artifactId>
+        <version>6.1.13</version>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework</groupId>
+        <artifactId>spring-web</artifactId>
+        <version>6.1.13</version>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework</groupId>
+        <artifactId>spring-webmvc</artifactId>
+        <version>6.1.13</version>
+    </dependency>
 
-    <groupId>com.javaproject</groupId>
-    <artifactId>database_service_project</artifactId>
-    <version>0.0.5-SNAPSHOT</version>
-    <packaging>jar</packaging>
+    <!-- JDBC support -->
+    <dependency>
+        <groupId>org.springframework</groupId>
+        <artifactId>spring-jdbc</artifactId>
+        <version>6.1.13</version>
+    </dependency>
 
-    <name>Database Service Project</name>
+    <!-- Hibernate (already in your POM) -->
+    <dependency>
+        <groupId>org.hibernate.orm</groupId>
+        <artifactId>hibernate-core</artifactId>
+        <version>6.3.1.Final</version>
+    </dependency>
 
-    <properties>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <maven.compiler.source>21</maven.compiler.source>
-        <maven.compiler.target>21</maven.compiler.target>
-        <maven.compiler.release>21</maven.compiler.release>
-        <java.version>21</java.version>
-    </properties>
-
-    <repositories>
-        <!-- Optional, only if you use other repos -->
-        <repository>
-            <id>central</id>
-            <url>https://repo.maven.apache.org/maven2</url>
-        </repository>
-    </repositories>
-
-    <dependencies>
-        <!-- QDox fixed to latest stable -->
-        <dependency>
-            <groupId>com.thoughtworks.qdox</groupId>
-            <artifactId>qdox</artifactId>
-            <version>2.0.3</version>
-        </dependency>
-
-        <!-- Example: Hibernate -->
-        <dependency>
-            <groupId>org.hibernate.orm</groupId>
-            <artifactId>hibernate-core</artifactId>
-            <version>6.3.1.Final</version>
-        </dependency>
-
-        <!-- Add other dependencies here -->
-    </dependencies>
-
-    <build>
-        <plugins>
-            <!-- Compiler plugin updated for JDK 21 -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.11.0</version>
-                <configuration>
-                    <release>21</release>
-                </configuration>
-            </plugin>
-
-            <!-- Surefire plugin for testing -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.1.2</version>
-                <configuration>
-                    <forkCount>1</forkCount>
-                    <reuseForks>true</reuseForks>
-                </configuration>
-            </plugin>
-
-            <!-- Optional: Shade or Assembly if packaging fat jar -->
-        </plugins>
-    </build>
-</project>
+    <!-- QDox dependency fixed -->
+    <dependency>
+        <groupId>com.thoughtworks.qdox</groupId>
+        <artifactId>qdox</artifactId>
+        <version>2.0.3</version>
+    </dependency>
+</dependencies>
