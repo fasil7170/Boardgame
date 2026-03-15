@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     tools {
-        maven 'maven3' // make sure Maven 3.9+ is installed in Jenkins
+        maven 'maven3' // ensure Maven 3.9+ installed in Jenkins
     }
 
     environment {
@@ -11,8 +11,8 @@ pipeline {
 
     options {
         skipDefaultCheckout(true)
-        // fail pipeline on any stage failure
-        failFast true
+        // you can optionally add timestamps or timeout here if needed
+        timestamps()
     }
 
     stages {
@@ -20,7 +20,7 @@ pipeline {
         stage('Verify Tools') {
             steps {
                 script {
-                    // Detect JAVA_HOME dynamically for JDK 21
+                    // Dynamically detect JAVA_HOME for JDK 21
                     env.JAVA_HOME = sh(
                         script: "readlink -f \$(which javac) | sed 's:/bin/javac::'",
                         returnStdout: true
