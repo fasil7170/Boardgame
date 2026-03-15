@@ -1,53 +1,72 @@
 pipeline {
     agent any
-    
+
     tools {
-        jdk 'jdk17'           // Use JDK 17 installed on agent
-        maven 'maven3'        // Use Maven 3
+        maven 'maven3'  // Ensure this matches your Jenkins tool name
     }
 
     environment {
-        JAVA_HOME = tool 'jdk17'
-        PATH = "${tool 'jdk17'}/bin:${tool 'maven3'}/bin:${env.PATH}"
+        // Detect JAVA_HOME dynamically for the agent
+        JAVA_HOME = ''
+        PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
         SCANNER_HOME = tool 'sonar-scanner'
     }
 
     stages {
+        stage('Verify Tools') {
+            steps {
+                script {
+                    // Dynamically detect JAVA_HOME
+                    env.JAVA_HOME = sh(script: "readlink -f \$(which javac) | sed 's:/bin/javac::'", returnStdout: true).trim()
+                    env.PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
+                }
+                sh '''
+                    echo "JAVA_HOME=${JAVA_HOME}"
+                    java -version
+                    mvn -version
+                '''
+            }
+        }
+
         stage('Git Checkout') {
             steps {
-                git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/fasil7170/Boardgame.git'
+                git branch: 'main',
+                    credentialsId: 'git-cred',
+                    url: 'https://github.com/fasil7170/Boardgame.git'
             }
         }
-        
-        stage('Clean & Compile') {
+
+        stage('Compile') {
             steps {
-                sh "mvn clean compile -U"
+                sh "mvn compile"
             }
         }
-        
+
         stage('Test') {
             steps {
                 sh "mvn test"
             }
         }
-        
+
         stage('File System Scan') {
             steps {
                 sh "trivy fs --format table -o trivy-fs-report.html ."
             }
         }
-        
+
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('sonar') {
-                    sh '''$SCANNER_HOME/bin/sonar-scanner \
+                    sh """
+                        $SCANNER_HOME/bin/sonar-scanner \
                         -Dsonar.projectName=BoardGame \
                         -Dsonar.projectKey=BoardGame \
-                        -Dsonar.java.binaries=.'''
+                        -Dsonar.java.binaries=.
+                    """
                 }
             }
         }
-        
+
         stage('Quality Gate') {
             steps {
                 script {
@@ -55,22 +74,22 @@ pipeline {
                 }
             }
         }
-        
-        stage('Build Artifact') {
+
+        stage('Build') {
             steps {
                 sh "mvn package"
             }
         }
-        
+
         stage('Publish To Nexus') {
             steps {
-                withMaven(globalMavenSettingsConfig: 'global-settings', jdk: 'jdk17', maven: 'maven3', traceability: true) {
+                withMaven(globalMavenSettingsConfig: 'global-settings', jdk: '', maven: 'maven3', traceability: true) {
                     sh "mvn deploy"
                 }
             }
         }
-        
-        stage('Build Docker Image') {
+
+        stage('Build & Tag Docker Image') {
             steps {
                 script {
                     withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
@@ -79,13 +98,13 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Docker Image Scan') {
             steps {
                 sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
             }
         }
-        
+
         stage('Push Docker Image') {
             steps {
                 script {
@@ -95,11 +114,10 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Deploy To Kubernetes') {
             steps {
                 withKubeConfig(
-                    clusterName: 'kubernetes',
                     credentialsId: 'k8-cred',
                     namespace: 'webapps',
                     serverUrl: 'https://192.168.0.100:6443'
@@ -108,11 +126,10 @@ pipeline {
                 }
             }
         }
-        
+
         stage('Verify Deployment') {
             steps {
                 withKubeConfig(
-                    clusterName: 'kubernetes',
                     credentialsId: 'k8-cred',
                     namespace: 'webapps',
                     serverUrl: 'https://192.168.0.100:6443'
