@@ -108,10 +108,10 @@ stages {
     }
 
     stage('Push Docker Image') {
-        steps {
-            catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                withDockerRegistry(credentialsId: 'docker-cred') {
-                    sh 'docker push fazil2664/boardshack:latest'
+    steps {
+        catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+            withDockerRegistry(credentialsId: 'docker-cred') {
+                sh 'docker push fazil2664/boardshack:latest'
                 }
             }
         }
