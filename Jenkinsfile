@@ -13,14 +13,13 @@ pipeline {
 
     options {
         skipDefaultCheckout true
-        timestamps()
+        // timestamps() removed
     }
 
     stages {
         stage('Verify Tools') {
             steps {
                 script {
-                    // Dynamically detect JAVA_HOME
                     env.JAVA_HOME = sh(
                         script: "readlink -f \$(which javac) | sed 's:/bin/javac::'",
                         returnStdout: true
