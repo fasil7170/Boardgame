@@ -1,7 +1,7 @@
 pipeline {
 agent any
 
-```
+
 tools {
     jdk 'jdk17'
     maven 'maven3'
@@ -134,6 +134,6 @@ post {
         echo "Pipeline completed with status: ${currentBuild.currentResult}"
     }
 }
-```
+
 
 }
