@@ -1,7 +1,7 @@
 pipeline {
 agent any
 
-```
+
 environment {
     SCANNER_HOME = '/home/jenkins/agent/tools/sonar-scanner'
 }
@@ -153,6 +153,6 @@ post {
         echo "Pipeline failed."
     }
 }
-```
+
 
 }
