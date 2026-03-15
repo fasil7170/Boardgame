@@ -2,12 +2,14 @@ pipeline {
     agent any
 
     tools {
-        jdk 'jdk17'        // Enforce JDK 17 for compatibility
+        jdk 'jdk17'        // Enforce JDK 17
         maven 'maven3'
     }
 
     environment {
         SCANNER_HOME = tool 'sonar-scanner'
+        JAVA_HOME = tool 'jdk17'      // Explicitly set JAVA_HOME to the JDK tool
+        PATH = "${tool 'jdk17'}/bin:${tool 'maven3'}/bin:${env.PATH}"
     }
 
     stages {
@@ -20,6 +22,7 @@ pipeline {
         stage('Verify Tools') {
             steps {
                 sh '''
+                    echo "JAVA_HOME=$JAVA_HOME"
                     java -version
                     mvn -version
                 '''
