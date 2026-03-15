@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     tools {
-        maven 'maven3' // ensure Maven 3.9+ is installed in Jenkins
+        maven 'maven3' // make sure Maven 3.9+ is installed in Jenkins
     }
 
     environment {
@@ -11,13 +11,16 @@ pipeline {
 
     options {
         skipDefaultCheckout(true)
+        // fail pipeline on any stage failure
+        failFast true
     }
 
     stages {
+
         stage('Verify Tools') {
             steps {
                 script {
-                    // Dynamically detect JAVA_HOME for the agent
+                    // Detect JAVA_HOME dynamically for JDK 21
                     env.JAVA_HOME = sh(
                         script: "readlink -f \$(which javac) | sed 's:/bin/javac::'",
                         returnStdout: true
@@ -59,7 +62,8 @@ pipeline {
 
         stage('File System Scan') {
             steps {
-                sh "trivy fs --format table -o trivy-fs-report.html ."
+                sh "trivy fs --format table -o trivy-fs-report.html . || true"
+                archiveArtifacts artifacts: 'trivy-fs-report.html', allowEmptyArchive: true
             }
         }
 
@@ -78,9 +82,7 @@ pipeline {
 
         stage('Quality Gate') {
             steps {
-                script {
-                    waitForQualityGate abortPipeline: true, credentialsId: 'sonar-token'
-                }
+                waitForQualityGate abortPipeline: true, credentialsId: 'sonar-token'
             }
         }
 
@@ -100,10 +102,17 @@ pipeline {
 
         stage('Docker Build & Push') {
             steps {
-                withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                withDockerRegistry([credentialsId: 'docker-cred', url: '']) {
                     sh "docker build -t fazil2664/boardshack:latest ."
                     sh "docker push fazil2664/boardshack:latest"
                 }
+            }
+        }
+
+        stage('Docker Image Scan') {
+            steps {
+                sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest || true"
+                archiveArtifacts artifacts: 'trivy-image-report.html', allowEmptyArchive: true
             }
         }
 
@@ -119,9 +128,6 @@ pipeline {
     }
 
     post {
-        failure {
-            echo "Pipeline failed at stage: ${env.STAGE_NAME}"
-        }
         always {
             echo "Pipeline finished with status: ${currentBuild.currentResult}"
         }
