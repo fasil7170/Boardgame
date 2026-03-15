@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     tools {
-        maven 'maven3' // ensure Maven 3.9+ installed in Jenkins
+        maven 'maven3' // ensure Maven 3.9+ is installed in Jenkins
     }
 
     environment {
@@ -47,102 +47,81 @@ pipeline {
 
         stage('Compile') {
             steps {
-                script {
-                    catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                        sh "mvn compile -Djava.version=21"
-                    }
-                }
+                sh "mvn compile -Djava.version=21"
             }
         }
 
         stage('Test') {
             steps {
-                script {
-                    catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                        sh "mvn test -Djava.version=21"
-                    }
-                }
+                sh "mvn test -Djava.version=21"
             }
         }
 
         stage('File System Scan') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh "trivy fs --format table -o trivy-fs-report.html ."
-                }
+                sh "trivy fs --format table -o trivy-fs-report.html ."
             }
         }
 
         stage('SonarQube Analysis') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    withSonarQubeEnv('sonar') {
-                        sh """
-                            $SCANNER_HOME/bin/sonar-scanner \
-                            -Dsonar.projectName=BoardGame \
-                            -Dsonar.projectKey=BoardGame \
-                            -Dsonar.java.binaries=.
-                        """
-                    }
+                withSonarQubeEnv('sonar') {
+                    sh """
+                        $SCANNER_HOME/bin/sonar-scanner \
+                        -Dsonar.projectName=BoardGame \
+                        -Dsonar.projectKey=BoardGame \
+                        -Dsonar.java.binaries=.
+                    """
                 }
             }
         }
 
         stage('Quality Gate') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    script {
-                        waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
-                    }
+                script {
+                    waitForQualityGate abortPipeline: true, credentialsId: 'sonar-token'
                 }
             }
         }
 
         stage('Package') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh "mvn package -Djava.version=21"
-                }
+                sh "mvn package -Djava.version=21"
             }
         }
 
         stage('Publish To Nexus') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    withMaven(globalMavenSettingsConfig: 'global-settings', maven: 'maven3') {
-                        sh "mvn deploy -Djava.version=21"
-                    }
+                withMaven(globalMavenSettingsConfig: 'global-settings', maven: 'maven3') {
+                    sh "mvn deploy -Djava.version=21"
                 }
             }
         }
 
         stage('Docker Build & Push') {
             steps {
-                script {
-                    catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                        withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
-                            sh "docker build -t fazil2664/boardshack:latest ."
-                            sh "docker push fazil2664/boardshack:latest"
-                        }
-                    }
+                withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                    sh "docker build -t fazil2664/boardshack:latest ."
+                    sh "docker push fazil2664/boardshack:latest"
                 }
             }
         }
 
         stage('Deploy To Kubernetes') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
-                        sh "kubectl apply -f deployment-service.yaml"
-                        sh "kubectl get pods -n webapps"
-                        sh "kubectl get svc -n webapps"
-                    }
+                withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
+                    sh "kubectl apply -f deployment-service.yaml"
+                    sh "kubectl get pods -n webapps"
+                    sh "kubectl get svc -n webapps"
                 }
             }
         }
     }
 
     post {
+        failure {
+            echo "Pipeline failed at stage: ${env.STAGE_NAME}"
+        }
         always {
             echo "Pipeline finished with status: ${currentBuild.currentResult}"
         }
