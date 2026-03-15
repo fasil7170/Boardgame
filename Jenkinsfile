@@ -2,46 +2,65 @@ pipeline {
     agent any
 
     tools {
-        maven 'maven3'
-        jdk 'jdk-21' // Make sure Jenkins has a JDK 21 tool configured
+        maven 'maven3' // must point to Maven 3.9+ installed on Jenkins
     }
 
     environment {
-        PATH = "${tool 'jdk-21'}/bin:${env.PATH}"
+        JAVA_HOME = '' // will be dynamically detected
+        PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
         SCANNER_HOME = tool 'sonar-scanner'
+    }
+
+    options {
+        skipDefaultCheckout true
+        timestamps()
     }
 
     stages {
         stage('Verify Tools') {
             steps {
-                sh '''
+                script {
+                    // Dynamically detect JAVA_HOME
+                    env.JAVA_HOME = sh(
+                        script: "readlink -f \$(which javac) | sed 's:/bin/javac::'",
+                        returnStdout: true
+                    ).trim()
+                    env.PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
+                }
+                sh """
                     echo "JAVA_HOME=${JAVA_HOME}"
                     java -version
                     mvn -version
-                '''
+                """
             }
         }
 
         stage('Git Checkout') {
             steps {
-                git branch: 'main',
-                    credentialsId: 'git-cred',
-                    url: 'https://github.com/fasil7170/Boardgame.git'
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: 'main']],
+                    userRemoteConfigs: [[url: 'https://github.com/fasil7170/Boardgame.git', credentialsId: 'git-cred']]
+                ])
             }
         }
 
         stage('Compile') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh "mvn compile"
+                script {
+                    catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                        sh "mvn compile"
+                    }
                 }
             }
         }
 
         stage('Test') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh "mvn test"
+                script {
+                    catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                        sh "mvn test"
+                    }
                 }
             }
         }
@@ -79,7 +98,7 @@ pipeline {
             }
         }
 
-        stage('Build') {
+        stage('Package') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     sh "mvn package"
@@ -97,29 +116,14 @@ pipeline {
             }
         }
 
-        stage('Build & Tag Docker Image') {
+        stage('Docker Build & Push') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    withDockerRegistry(credentialsId: 'docker-cred') {
-                        sh "docker build -t fazil2664/boardshack:latest ."
-                    }
-                }
-            }
-        }
-
-        stage('Docker Image Scan') {
-            steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
-                }
-            }
-        }
-
-        stage('Push Docker Image') {
-            steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    withDockerRegistry(credentialsId: 'docker-cred') {
-                        sh "docker push fazil2664/boardshack:latest"
+                script {
+                    catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                        withDockerRegistry(credentialsId: 'docker-cred', url: '', toolName: 'docker') {
+                            sh "docker build -t fazil2664/boardshack:latest ."
+                            sh "docker push fazil2664/boardshack:latest"
+                        }
                     }
                 }
             }
@@ -128,17 +132,8 @@ pipeline {
         stage('Deploy To Kubernetes') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps', serverUrl: 'https://192.168.0.100:6443') {
+                    withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps') {
                         sh "kubectl apply -f deployment-service.yaml"
-                    }
-                }
-            }
-        }
-
-        stage('Verify Deployment') {
-            steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps', serverUrl: 'https://192.168.0.100:6443') {
                         sh "kubectl get pods -n webapps"
                         sh "kubectl get svc -n webapps"
                     }
