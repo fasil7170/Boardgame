@@ -2,35 +2,33 @@ pipeline {
     agent any
 
     tools {
-        maven 'maven3' // must point to Maven 3.9+ installed on Jenkins
+        maven 'maven3' // ensure Maven 3.9+ installed in Jenkins
     }
 
     environment {
-        JAVA_HOME = '' // will be dynamically detected
-        PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
         SCANNER_HOME = tool 'sonar-scanner'
     }
 
     options {
-        skipDefaultCheckout true
-        // timestamps() removed
+        skipDefaultCheckout(true)
     }
 
     stages {
         stage('Verify Tools') {
             steps {
                 script {
+                    // Dynamically detect JAVA_HOME for the agent
                     env.JAVA_HOME = sh(
                         script: "readlink -f \$(which javac) | sed 's:/bin/javac::'",
                         returnStdout: true
                     ).trim()
                     env.PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
                 }
-                sh """
+                sh '''
                     echo "JAVA_HOME=${JAVA_HOME}"
                     java -version
                     mvn -version
-                """
+                '''
             }
         }
 
@@ -39,7 +37,10 @@ pipeline {
                 checkout([
                     $class: 'GitSCM',
                     branches: [[name: 'main']],
-                    userRemoteConfigs: [[url: 'https://github.com/fasil7170/Boardgame.git', credentialsId: 'git-cred']]
+                    userRemoteConfigs: [[
+                        url: 'https://github.com/fasil7170/Boardgame.git',
+                        credentialsId: 'git-cred'
+                    ]]
                 ])
             }
         }
@@ -48,7 +49,7 @@ pipeline {
             steps {
                 script {
                     catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                        sh "mvn compile"
+                        sh "mvn compile -Djava.version=21"
                     }
                 }
             }
@@ -58,7 +59,7 @@ pipeline {
             steps {
                 script {
                     catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                        sh "mvn test"
+                        sh "mvn test -Djava.version=21"
                     }
                 }
             }
@@ -100,7 +101,7 @@ pipeline {
         stage('Package') {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                    sh "mvn package"
+                    sh "mvn package -Djava.version=21"
                 }
             }
         }
@@ -109,7 +110,7 @@ pipeline {
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
                     withMaven(globalMavenSettingsConfig: 'global-settings', maven: 'maven3') {
-                        sh "mvn deploy"
+                        sh "mvn deploy -Djava.version=21"
                     }
                 }
             }
@@ -119,7 +120,7 @@ pipeline {
             steps {
                 script {
                     catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-                        withDockerRegistry(credentialsId: 'docker-cred', url: '', toolName: 'docker') {
+                        withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
                             sh "docker build -t fazil2664/boardshack:latest ."
                             sh "docker push fazil2664/boardshack:latest"
                         }
