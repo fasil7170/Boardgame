@@ -2,24 +2,18 @@ pipeline {
     agent any
 
     tools {
-        maven 'maven3'  // Ensure this matches your Jenkins tool name
+        maven 'maven3'
+        jdk 'jdk-21' // Make sure Jenkins has a JDK 21 tool configured
     }
 
     environment {
-        // Detect JAVA_HOME dynamically for the agent
-        JAVA_HOME = ''
-        PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
+        PATH = "${tool 'jdk-21'}/bin:${env.PATH}"
         SCANNER_HOME = tool 'sonar-scanner'
     }
 
     stages {
         stage('Verify Tools') {
             steps {
-                script {
-                    // Dynamically detect JAVA_HOME
-                    env.JAVA_HOME = sh(script: "readlink -f \$(which javac) | sed 's:/bin/javac::'", returnStdout: true).trim()
-                    env.PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
-                }
                 sh '''
                     echo "JAVA_HOME=${JAVA_HOME}"
                     java -version
@@ -38,61 +32,75 @@ pipeline {
 
         stage('Compile') {
             steps {
-                sh "mvn compile"
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    sh "mvn compile"
+                }
             }
         }
 
         stage('Test') {
             steps {
-                sh "mvn test"
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    sh "mvn test"
+                }
             }
         }
 
         stage('File System Scan') {
             steps {
-                sh "trivy fs --format table -o trivy-fs-report.html ."
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    sh "trivy fs --format table -o trivy-fs-report.html ."
+                }
             }
         }
 
         stage('SonarQube Analysis') {
             steps {
-                withSonarQubeEnv('sonar') {
-                    sh """
-                        $SCANNER_HOME/bin/sonar-scanner \
-                        -Dsonar.projectName=BoardGame \
-                        -Dsonar.projectKey=BoardGame \
-                        -Dsonar.java.binaries=.
-                    """
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    withSonarQubeEnv('sonar') {
+                        sh """
+                            $SCANNER_HOME/bin/sonar-scanner \
+                            -Dsonar.projectName=BoardGame \
+                            -Dsonar.projectKey=BoardGame \
+                            -Dsonar.java.binaries=.
+                        """
+                    }
                 }
             }
         }
 
         stage('Quality Gate') {
             steps {
-                script {
-                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    script {
+                        waitForQualityGate abortPipeline: false, credentialsId: 'sonar-token'
+                    }
                 }
             }
         }
 
         stage('Build') {
             steps {
-                sh "mvn package"
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    sh "mvn package"
+                }
             }
         }
 
         stage('Publish To Nexus') {
             steps {
-                withMaven(globalMavenSettingsConfig: 'global-settings', jdk: '', maven: 'maven3', traceability: true) {
-                    sh "mvn deploy"
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    withMaven(globalMavenSettingsConfig: 'global-settings', maven: 'maven3') {
+                        sh "mvn deploy"
+                    }
                 }
             }
         }
 
         stage('Build & Tag Docker Image') {
             steps {
-                script {
-                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    withDockerRegistry(credentialsId: 'docker-cred') {
                         sh "docker build -t fazil2664/boardshack:latest ."
                     }
                 }
@@ -101,14 +109,16 @@ pipeline {
 
         stage('Docker Image Scan') {
             steps {
-                sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
+                }
             }
         }
 
         stage('Push Docker Image') {
             steps {
-                script {
-                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    withDockerRegistry(credentialsId: 'docker-cred') {
                         sh "docker push fazil2664/boardshack:latest"
                     }
                 }
@@ -117,25 +127,21 @@ pipeline {
 
         stage('Deploy To Kubernetes') {
             steps {
-                withKubeConfig(
-                    credentialsId: 'k8-cred',
-                    namespace: 'webapps',
-                    serverUrl: 'https://192.168.0.100:6443'
-                ) {
-                    sh "kubectl apply -f deployment-service.yaml"
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps', serverUrl: 'https://192.168.0.100:6443') {
+                        sh "kubectl apply -f deployment-service.yaml"
+                    }
                 }
             }
         }
 
         stage('Verify Deployment') {
             steps {
-                withKubeConfig(
-                    credentialsId: 'k8-cred',
-                    namespace: 'webapps',
-                    serverUrl: 'https://192.168.0.100:6443'
-                ) {
-                    sh "kubectl get pods -n webapps"
-                    sh "kubectl get svc -n webapps"
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    withKubeConfig(credentialsId: 'k8-cred', namespace: 'webapps', serverUrl: 'https://192.168.0.100:6443') {
+                        sh "kubectl get pods -n webapps"
+                        sh "kubectl get svc -n webapps"
+                    }
                 }
             }
         }
