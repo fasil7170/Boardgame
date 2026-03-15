@@ -1,7 +1,7 @@
 pipeline {
 agent any
 
-
+```
 environment {
     SCANNER_HOME = '/home/jenkins/agent/tools/sonar-scanner'
 }
@@ -108,10 +108,10 @@ stages {
     }
 
     stage('Push Docker Image') {
-    steps {
-        catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-            withDockerRegistry(credentialsId: 'docker-cred') {
-                sh 'docker push fazil2664/boardshack:latest'
+        steps {
+            catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                withDockerRegistry(credentialsId: 'docker-cred', url: 'https://index.docker.io/v1/') {
+                    sh 'docker push fazil2664/boardshack:latest'
                 }
             }
         }
@@ -146,7 +146,13 @@ post {
     always {
         echo "Pipeline finished with status: ${currentBuild.currentResult}"
     }
+    success {
+        echo "Pipeline completed successfully."
+    }
+    failure {
+        echo "Pipeline failed."
+    }
 }
-
+```
 
 }
