@@ -2,30 +2,25 @@ pipeline {
     agent any
 
     tools {
-        // Ensure Maven 3+ is installed in Jenkins Global Tool Config
-        maven 'maven3'
+        maven 'maven3' // Ensure Maven is installed in Jenkins
     }
 
     options {
-        // We'll do Git checkout manually
-        skipDefaultCheckout(true)
+        skipDefaultCheckout(true) // We'll do Git checkout manually
+        timeout(time: 30, unit: 'MINUTES') // Optional: fail if pipeline hangs
     }
 
     environment {
-        // Sonar scanner installed in Jenkins Global Tool Config
-        SCANNER_HOME = tool 'sonar-scanner'
+        SCANNER_HOME = tool 'sonar-scanner' // Sonar scanner installed in Jenkins
+        MAVEN_DIR = 'database_service_project' // Change this to where your pom.xml is
     }
 
     stages {
-
         stage('Verify Tools') {
             steps {
                 script {
-                    // Dynamically detect JAVA_HOME for JDK 21
-                    env.JAVA_HOME = sh(
-                        script: "readlink -f \$(which javac) | sed 's:/bin/javac::'",
-                        returnStdout: true
-                    ).trim()
+                    // Detect JAVA_HOME dynamically
+                    env.JAVA_HOME = sh(script: "readlink -f \$(which javac) | sed 's:/bin/javac::'", returnStdout: true).trim()
                     env.PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
                 }
                 sh '''
@@ -49,10 +44,19 @@ pipeline {
             }
         }
 
-        stage('Compile') {
+        stage('Validate POM') {
             steps {
                 script {
-                    // Stop pipeline if compile fails
+                    if (!fileExists("${env.MAVEN_DIR}/pom.xml")) {
+                        error "pom.xml not found in ${env.MAVEN_DIR}, cannot proceed!"
+                    }
+                }
+            }
+        }
+
+        stage('Compile') {
+            steps {
+                dir("${env.MAVEN_DIR}") {
                     sh "mvn compile"
                 }
             }
@@ -60,8 +64,7 @@ pipeline {
 
         stage('Test') {
             steps {
-                script {
-                    // Stop pipeline if tests fail
+                dir("${env.MAVEN_DIR}") {
                     sh "mvn test"
                 }
             }
@@ -69,7 +72,7 @@ pipeline {
 
         stage('Package') {
             steps {
-                script {
+                dir("${env.MAVEN_DIR}") {
                     sh "mvn package"
                 }
             }
@@ -77,7 +80,7 @@ pipeline {
 
         stage('Publish To Nexus') {
             steps {
-                script {
+                dir("${env.MAVEN_DIR}") {
                     withMaven(globalMavenSettingsConfig: 'global-settings', maven: 'maven3') {
                         sh "mvn deploy"
                     }
@@ -88,7 +91,6 @@ pipeline {
         stage('Docker Build & Push') {
             steps {
                 script {
-                    // Docker registry URL provided
                     withDockerRegistry(credentialsId: 'docker-cred', url: 'https://index.docker.io/v1/') {
                         sh "docker build -t fazil2664/boardshack:latest ."
                         sh "docker push fazil2664/boardshack:latest"
@@ -111,7 +113,7 @@ pipeline {
 
         stage('SonarQube Analysis') {
             steps {
-                script {
+                dir("${env.MAVEN_DIR}") {
                     withSonarQubeEnv('sonar') {
                         sh """
                             $SCANNER_HOME/bin/sonar-scanner \
@@ -126,10 +128,7 @@ pipeline {
 
         stage('Quality Gate') {
             steps {
-                script {
-                    // Abort pipeline if quality gate fails
-                    waitForQualityGate abortPipeline: true, credentialsId: 'sonar-token'
-                }
+                waitForQualityGate abortPipeline: true, credentialsId: 'sonar-token'
             }
         }
     }
