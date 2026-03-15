@@ -2,37 +2,27 @@ pipeline {
     agent any
 
     tools {
-        maven 'maven3'  // Ensure this matches your Jenkins tool name
+        jdk 'jdk17'        // Enforce JDK 17 for compatibility
+        maven 'maven3'
     }
 
     environment {
-        // Detect JAVA_HOME dynamically for the agent
-        JAVA_HOME = ''
-        PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
         SCANNER_HOME = tool 'sonar-scanner'
     }
 
     stages {
-        stage('Verify Tools') {
+        stage('Git Checkout') {
             steps {
-                script {
-                    // Dynamically detect JAVA_HOME
-                    env.JAVA_HOME = sh(script: "readlink -f \$(which javac) | sed 's:/bin/javac::'", returnStdout: true).trim()
-                    env.PATH = "${env.JAVA_HOME}/bin:${env.PATH}"
-                }
-                sh '''
-                    echo "JAVA_HOME=${JAVA_HOME}"
-                    java -version
-                    mvn -version
-                '''
+                git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/fasil7170/Boardgame.git'
             }
         }
 
-        stage('Git Checkout') {
+        stage('Verify Tools') {
             steps {
-                git branch: 'main',
-                    credentialsId: 'git-cred',
-                    url: 'https://github.com/fasil7170/Boardgame.git'
+                sh '''
+                    java -version
+                    mvn -version
+                '''
             }
         }
 
@@ -57,12 +47,8 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('sonar') {
-                    sh """
-                        $SCANNER_HOME/bin/sonar-scanner \
-                        -Dsonar.projectName=BoardGame \
-                        -Dsonar.projectKey=BoardGame \
-                        -Dsonar.java.binaries=.
-                    """
+                    sh '''$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=BoardGame -Dsonar.projectKey=BoardGame \
+                        -Dsonar.java.binaries=.'''
                 }
             }
         }
@@ -75,7 +61,7 @@ pipeline {
             }
         }
 
-        stage('Build') {
+        stage('Build Artifact') {
             steps {
                 sh "mvn package"
             }
@@ -83,7 +69,7 @@ pipeline {
 
         stage('Publish To Nexus') {
             steps {
-                withMaven(globalMavenSettingsConfig: 'global-settings', jdk: '', maven: 'maven3', traceability: true) {
+                withMaven(globalMavenSettingsConfig: 'global-settings', jdk: 'jdk17', maven: 'maven3', traceability: true) {
                     sh "mvn deploy"
                 }
             }
@@ -117,11 +103,7 @@ pipeline {
 
         stage('Deploy To Kubernetes') {
             steps {
-                withKubeConfig(
-                    credentialsId: 'k8-cred',
-                    namespace: 'webapps',
-                    serverUrl: 'https://192.168.0.100:6443'
-                ) {
+                withKubeConfig(caCertificate: '', clusterName: 'kubernetes', contextName: '', credentialsId: 'k8-cred', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://192.168.0.100:6443') {
                     sh "kubectl apply -f deployment-service.yaml"
                 }
             }
@@ -129,11 +111,7 @@ pipeline {
 
         stage('Verify Deployment') {
             steps {
-                withKubeConfig(
-                    credentialsId: 'k8-cred',
-                    namespace: 'webapps',
-                    serverUrl: 'https://192.168.0.100:6443'
-                ) {
+                withKubeConfig(caCertificate: '', clusterName: 'kubernetes', contextName: '', credentialsId: 'k8-cred', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://192.168.0.100:6443') {
                     sh "kubectl get pods -n webapps"
                     sh "kubectl get svc -n webapps"
                 }
