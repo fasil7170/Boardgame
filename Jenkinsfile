@@ -1,7 +1,7 @@
 pipeline {
 agent any
 
-```
+
 tools {
     maven 'maven3'
 }
@@ -123,6 +123,6 @@ post {
         echo "Pipeline completed with status: ${currentBuild.currentResult}"
     }
 }
-```
+
 
 }
