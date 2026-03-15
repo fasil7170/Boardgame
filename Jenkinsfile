@@ -2,22 +2,26 @@ pipeline {
     agent any
 
     tools {
-        maven 'maven3' // Ensure Maven is installed and configured in Jenkins
+        // Ensure Maven 3+ is installed in Jenkins Global Tool Config
+        maven 'maven3'
     }
 
     options {
-        skipDefaultCheckout(true)  // We'll do Git checkout manually
+        // We'll do Git checkout manually
+        skipDefaultCheckout(true)
     }
 
     environment {
-        SCANNER_HOME = tool 'sonar-scanner' // Sonar scanner installed in Jenkins
+        // Sonar scanner installed in Jenkins Global Tool Config
+        SCANNER_HOME = tool 'sonar-scanner'
     }
 
     stages {
+
         stage('Verify Tools') {
             steps {
                 script {
-                    // Dynamically detect JAVA_HOME
+                    // Dynamically detect JAVA_HOME for JDK 21
                     env.JAVA_HOME = sh(
                         script: "readlink -f \$(which javac) | sed 's:/bin/javac::'",
                         returnStdout: true
@@ -48,6 +52,7 @@ pipeline {
         stage('Compile') {
             steps {
                 script {
+                    // Stop pipeline if compile fails
                     sh "mvn compile"
                 }
             }
@@ -56,6 +61,7 @@ pipeline {
         stage('Test') {
             steps {
                 script {
+                    // Stop pipeline if tests fail
                     sh "mvn test"
                 }
             }
@@ -82,7 +88,7 @@ pipeline {
         stage('Docker Build & Push') {
             steps {
                 script {
-                    // Provide Docker registry URL
+                    // Docker registry URL provided
                     withDockerRegistry(credentialsId: 'docker-cred', url: 'https://index.docker.io/v1/') {
                         sh "docker build -t fazil2664/boardshack:latest ."
                         sh "docker push fazil2664/boardshack:latest"
@@ -121,6 +127,7 @@ pipeline {
         stage('Quality Gate') {
             steps {
                 script {
+                    // Abort pipeline if quality gate fails
                     waitForQualityGate abortPipeline: true, credentialsId: 'sonar-token'
                 }
             }
