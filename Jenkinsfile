@@ -11,8 +11,7 @@ pipeline {
 
     options {
         skipDefaultCheckout(true)
-        // you can optionally add timestamps or timeout here if needed
-        timestamps()
+        // timestamps() removed to avoid Jenkins syntax errors
     }
 
     stages {
