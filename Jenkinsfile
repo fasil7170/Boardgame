@@ -147,6 +147,6 @@ post {
         echo "Pipeline finished with status: ${currentBuild.currentResult}"
     }
 }
-```
+
 
 }
