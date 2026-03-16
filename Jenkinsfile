@@ -1,130 +1,120 @@
 pipeline {
     agent any
-
+    
     tools {
+        jdk 'jdk17'
         maven 'maven3'
     }
 
-    options {
-        timeout(time: 30, unit: 'MINUTES')
-    }
-
     environment {
-        MAVEN_DIR = "database_service_project"
-        DOCKER_IMAGE = "fazil2664/boardshack"
-        DOCKER_TAG = "latest"
         SCANNER_HOME = tool 'sonar-scanner'
     }
 
     stages {
-
-        stage('Checkout Code') {
+        stage('Git Checkout') {
             steps {
-                git branch: 'main',
-                credentialsId: 'git-cred',
-                url: 'https://github.com/fasil7170/Boardgame.git'
+               git branch: 'main', credentialsId: 'git-cred', url: 'https://github.com/fasil7170/Boardgame.git'
             }
         }
-
-        stage('Verify Environment') {
+        
+        stage('Compile') {
             steps {
-                sh '''
-                java -version
-                mvn -version
-                docker --version
-                '''
+                sh "mvn compile"
             }
         }
-
-        stage('Validate POM') {
+        
+        stage('Test') {
             steps {
-                dir("${MAVEN_DIR}") {
-                    sh "mvn validate"
-                }
+                sh "mvn test"
             }
         }
-
-        stage('Build Application') {
+        
+        stage('File System Scan') {
             steps {
-                dir("${MAVEN_DIR}") {
-                    sh "mvn clean package -DskipTests"
-                }
+                sh "trivy fs --format table -o trivy-fs-report.html ."
             }
         }
-
+        
         stage('SonarQube Analysis') {
             steps {
-                dir("${MAVEN_DIR}") {
-                    withSonarQubeEnv('sonar') {
-                        sh """
-                        mvn sonar:sonar \
+                withSonarQubeEnv('sonar') {
+                    sh """$SCANNER_HOME/bin/sonar-scanner \
+                        -Dsonar.projectName=BoardGame \
                         -Dsonar.projectKey=BoardGame \
-                        -Dsonar.projectName=BoardGame
-                        """
-                    }
+                        -Dsonar.java.binaries=. """
                 }
             }
         }
-
+        
         stage('Quality Gate') {
             steps {
-                timeout(time: 5, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
-                }
+                waitForQualityGate abortPipeline: false
             }
         }
-
+        
+        stage('Build') {
+            steps {
+               sh "mvn package"
+            }
+        }
+        
         stage('Publish To Nexus') {
             steps {
-                dir("${MAVEN_DIR}") {
-                    withMaven(globalMavenSettingsConfig: 'global-settings', maven: 'maven3') {
-                        sh "mvn deploy -DskipTests"
+               withMaven(globalMavenSettingsConfig: 'global-settings', jdk: 'jdk17', maven: 'maven3') {
+                    sh "mvn deploy"
+                }
+            }
+        }
+        
+        stage('Build & Tag Docker Image') {
+            steps {
+               script {
+                   withDockerRegistry(credentialsId: 'docker-cred') {
+                       sh "docker build -t fazil2664/boardshack:latest ."
                     }
-                }
+               }
             }
         }
-
-        stage('Docker Build') {
+        
+        stage('Docker Image Scan') {
             steps {
-                dir("${MAVEN_DIR}") {
-                    sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
-                }
+                sh "trivy image --format table -o trivy-image-report.html fazil2664/boardshack:latest"
             }
         }
-
-        stage('Docker Push') {
+        
+        stage('Push Docker Image') {
             steps {
-                withDockerRegistry(credentialsId: 'docker-cred', url: '') {
-                    sh "docker push ${DOCKER_IMAGE}:${DOCKER_TAG}"
-                }
+               script {
+                   withDockerRegistry(credentialsId: 'docker-cred') {
+                       sh "docker push fazil2664/boardshack:latest"
+                    }
+               }
             }
         }
-
+        
         stage('Deploy To Kubernetes') {
             steps {
-                withKubeConfig(credentialsId: 'k8-cred') {
-                    sh """
-                    kubectl apply -f ${MAVEN_DIR}/deployment-service.yaml
-                    kubectl rollout status deployment/boardgame -n webapps
-                    """
+               withKubeConfig(
+                   credentialsId: 'k8-cred', 
+                   namespace: 'webapps', 
+                   serverUrl: 'https://192.168.0.100:6443'
+               ) {
+                    sh "kubectl apply -f deployment-service.yaml"
                 }
             }
         }
-
-    }
-
-    post {
-
-        success {
-            echo "Pipeline completed successfully 🎉"
-        }
-
-        failure {
-            echo "Pipeline failed ❌"
-        }
-
-        always {
-            archiveArtifacts artifacts: "${MAVEN_DIR}/target/*.jar"
+        
+        stage('Verify Deployment') {
+            steps {
+               withKubeConfig(
+                   credentialsId: 'k8-cred', 
+                   namespace: 'webapps', 
+                   serverUrl: 'https://192.168.0.100:6443'
+               ) {
+                    sh "kubectl get pods -n webapps"
+                    sh "kubectl get svc -n webapps"
+                }
+            }
         }
     }
 }
