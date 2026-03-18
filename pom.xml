@@ -27,7 +27,7 @@
     </dependencyManagement>
 
     <dependencies>
-        <!-- Web & Security -->
+        <!-- Spring Web & Security -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
@@ -37,7 +37,7 @@
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
-        <!-- Data JPA & H2 DB -->
+        <!-- Spring Data JPA & H2 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa</artifactId>
@@ -48,7 +48,7 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Jakarta Servlet API -->
+        <!-- Jakarta Servlet API (for Spring Boot 3.x) -->
         <dependency>
             <groupId>jakarta.servlet</groupId>
             <artifactId>jakarta.servlet-api</artifactId>
@@ -60,6 +60,7 @@
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
+            <version>1.18.32</version>
             <scope>provided</scope>
         </dependency>
 
@@ -82,7 +83,7 @@
                 </configuration>
             </plugin>
 
-            <!-- Compiler Plugin -->
+            <!-- Maven Compiler Plugin -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
