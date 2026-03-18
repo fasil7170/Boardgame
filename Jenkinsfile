@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     tools {
-        jdk 'jdk17'
+        jdk 'jdk11'   // Updated to Java 11
         maven 'maven3'
     }
 
@@ -60,7 +60,7 @@ pipeline {
 
         stage('Publish To Nexus') {
             steps {
-                withMaven(globalMavenSettingsConfig: 'global-settings', jdk: 'jdk17', maven: 'maven3') {
+                withMaven(globalMavenSettingsConfig: 'global-settings', jdk: 'jdk11', maven: 'maven3') {
                     sh "mvn deploy -DskipTests"
                 }
             }
